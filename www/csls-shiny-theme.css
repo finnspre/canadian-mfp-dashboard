@@ -232,10 +232,11 @@ textarea:focus {
 
 /* Shiny's selectize binding adds a "form-control" class onto the OUTER
    .selectize-control wrapper (not just the inner .selectize-input box)
-   whenever the widget starts with no item selected -- true only for
-   pair_geography on the Compare/Data tabs (selected = character(0));
-   every other selectize picker in the app always has a default
-   selection and never gets this class. Selectize's own bundled CSS
+   whenever the widget starts with no item selected. This app's pickers
+   have since migrated to the custom treeSelectInput widget (see
+   www/tree_select.js), which has no selectize markup at all, so nothing
+   live triggers this today -- kept in case a real selectizeInput with an
+   empty default is ever reintroduced. Selectize's own bundled CSS
    neutralizes that wrapper back to invisible at rest (.form-control
    .selectize-control { border: 0; border-radius: 0; ... }) so only the
    inner, correctly-rounded .selectize-input shows through -- but the

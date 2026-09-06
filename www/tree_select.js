@@ -1,7 +1,7 @@
 // Custom Shiny.InputBinding backing treeSelectInput() (see app.R). Renders
-// nested tree_data (Industry's Aggregate -> 2-digit -> 3-digit hierarchy)
-// as a collapsible tree, or flat tree_data (Variable, Geography -- every
-// node a root, no children) as a plain scrollable list -- same markup and
+// nested tree_data (Industry's Aggregate -> 2-digit hierarchy) as a
+// collapsible tree, or flat tree_data (Variable -- every node a root, no
+// children) as a plain scrollable list -- same markup and
 // binding either way, since a childless row just renders with its expand
 // arrow hidden (see .tree-select-row.no-children in app.R's CSS). The
 // toggle itself is a text <input>, not a button -- clicking (or tabbing)
@@ -32,8 +32,8 @@
 
   // Plain-object stand-ins for Map/Set (and helpers for the DOM/NodeList
   // methods used below) -- this widget is the *only* thing under each of
-  // "Variable"/"Geography"/"Industry" (treeSelectInput() emits no server-
-  // rendered fallback markup, just an empty div + the JSON payload), so if
+  // "Variable"/"Industry" (treeSelectInput() emits no server-rendered
+  // fallback markup, just an empty div + the JSON payload), so if
   // this file throws anywhere during initialize() the whole control
   // silently stays blank with nothing else on the page indicating why.
   // Map/Set/NodeList.prototype.forEach/
@@ -189,8 +189,8 @@
   function renderTree(el, nodes, initialValue) {
     $(el).find(".tree-select-toggle, .tree-select-chevron, .tree-select-panel").remove();
 
-    // True when nothing in this tree_data has children at all (Variable/
-    // Geography's flat lists) rather than some rows being leaves alongside
+    // True when nothing in this tree_data has children at all (Variable's
+    // flat list) rather than some rows being leaves alongside
     // genuine branches (Industry). CSS keys off this (.tree-select-flat)
     // to skip reserving every row's expand-arrow gutter -- that gutter is
     // only worth keeping (as blank space, via visibility:hidden below)
@@ -405,7 +405,7 @@
       // Clicking or tabbing into the toggle input is what opens the panel
       // -- and blanks the input (cursor at position 0, nothing selected)
       // rather than leaving/highlighting the current label, matching
-      // selectize's own single-select behaviour (Geography/Variable):
+      // selectize's own single-select behaviour (Variable/Industry):
       // its bundled CSS hides the selected .item while the dropdown is
       // open, showing just the empty search box underneath. closePanel()
       // is what puts the label back if nothing new gets picked.

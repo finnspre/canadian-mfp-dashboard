@@ -2,10 +2,10 @@
 # logic via shiny::testServer so chart/table rendering errors surface
 # without needing a browser. Not part of the app itself.
 #
-# Uses a small synthetic lp_data fixture already in the FINAL post-pipeline
-# shape (Year/Geography/Variable/Industry/IndustryLevel/Value/UOM), since
-# load_lp_data() is now a thin loader -- not a real StatCan pull, so this
-# runs hermetically with no network/cansim dependency.
+# Uses a small synthetic mfp_data fixture already in the FINAL post-pipeline
+# shape (Year/Variable/Industry/IndustryLevel/Value/UOM), since load_mfp_data()
+# is now a thin loader -- not a real StatCan pull, so this runs hermetically
+# with no network/cansim dependency.
 #
 # Four free-standing sections below, each with its own fixture and its own
 # fresh sys.source()'d copy of app.R (module-private reactives -- active_pairs(),
@@ -14,8 +14,8 @@
 # session$setInputs() keys and reads only output[["<id>-<name>"]] or
 # top-level helpers, the same way a real browser session could): the main
 # interactive-flow checks, the UX-state (loading/empty/error communication)
-# checks, the data-contract checks (validate_data_contract()/LP_DATA_CONTRACT
-# -- see data_contract.R), and the safe_load_lp_data() recovery check.
+# checks, the data-contract checks (validate_data_contract()/MFP_DATA_CONTRACT
+# -- see data_contract.R), and the safe_load_mfp_data() recovery check.
 
 suppressMessages({
   library(shiny)
@@ -31,63 +31,57 @@ expect_validation_error <- function(res, label) {
   cat(label, ": caught a catchable validation condition OK, message: ", conditionMessage(res), "\n", sep = "")
 }
 
-# A single valid lp_data row-shape, reused by every data-contract check
+# A single valid mfp_data row-shape, reused by every data-contract check
 # below as the known-good baseline that gets deliberately broken one way at
-# a time.
+# a time. No Geography column -- table 36-10-0208-01 covers Canada only
+# (see data_pipeline.R), so unlike the old labour productivity fixture this
+# replaces, there's no second series dimension to carry.
 good_row <- function() {
   data.frame(
-    Year = 2021:2023, Geography = "Canada", Variable = "Labour productivity",
-    Industry = "All industries", IndustryLevel = "Aggregate", Value = c(100, 101, 102),
-    UOM = "Chained (2017) dollars per hour", stringsAsFactors = FALSE
+    Year = 2021:2023, Variable = "Multifactor productivity",
+    Industry = "Business sector", IndustryLevel = "Aggregate", Value = c(100, 101, 102),
+    UOM = "Index, 2017=100", stringsAsFactors = FALSE
   )
 }
 
 fixture_path <- tempfile(fileext = ".RData")
 
-# All industries (Aggregate): Canada only, 100/101/102 over 2021-2023 --
-# the default variable/geography/level/industry combination.
-# Manufacturing (2-digit): Canada 95/96/97 and Ontario 80/81/82 over
-# 2021-2023 -- lets the same industry be compared across geographies, and
-# a different industry+geography pair be mixed in alongside it.
-# Retail trade (2-digit): Canada only, 60/62/64 over 2021-2023 -- a second
-# same-level industry so "compare multiple industries in one geography"
-# has two full-history series, and so the Aggregate vs. 2-digit cumulative
-# -level test has something to add.
-# Food manufacturing (3-digit): Canada only, 40/41/42 over 2021-2023 -- so
-# the "3-digit" level surfaces all three tiers at once.
-# Construction (2-digit): Canada only, 50/52 over 2022-2023 only --
-# exercises "series starts later than the rest of the panel" for the
-# rebase/ranking edge cases.
-series_block <- function(geography, industry, level, years, values) {
+# Business sector (Aggregate): 100/101/102 over 2021-2023 -- the default
+# variable/industry combination.
+# Manufacturing (2-digit): 95/96/97 over 2021-2023 -- a second, comparable
+# industry so "compare multiple industries" has a second full-history series.
+# Retail trade (2-digit): 60/62/64 over 2021-2023 -- a third same-level
+# industry so the Aggregate vs. 2-digit cumulative-level test has something
+# to add.
+# Construction (2-digit): 50/52 over 2022-2023 only -- exercises "series
+# starts later than the rest of the panel" for the rebase/ranking edge cases.
+series_block <- function(industry, level, years, values) {
   data.frame(
-    Year = years, Geography = geography, Variable = "Labour productivity",
+    Year = years, Variable = "Multifactor productivity",
     Industry = industry, IndustryLevel = level, Value = values,
-    UOM = "Chained (2017) dollars per hour", stringsAsFactors = FALSE
+    UOM = "Index, 2017=100", stringsAsFactors = FALSE
   )
 }
 
 make_fixture <- function(sector_value = 100.0, manufacturing_value = 95.0,
-                          manufacturing_value_on = 80.0, retail_value = 60.0,
-                          extra_year = FALSE) {
-  lp_data <- rbind(
-    series_block("Canada", "All industries", "Aggregate", 2021:2023, sector_value + 0:2),
-    series_block("Canada", "Manufacturing", "2-digit", 2021:2023, manufacturing_value + 0:2),
-    series_block("Canada", "Retail trade", "2-digit", 2021:2023, retail_value + c(0, 2, 4)),
-    series_block("Ontario", "Manufacturing", "2-digit", 2021:2023, manufacturing_value_on + 0:2),
-    series_block("Canada", "Food manufacturing", "3-digit", 2021:2023, c(40.0, 41.0, 42.0)),
-    series_block("Canada", "Construction", "2-digit", 2022:2023, c(50.0, 52.0))
+                          retail_value = 60.0, extra_year = FALSE) {
+  mfp_data <- rbind(
+    series_block("Business sector", "Aggregate", 2021:2023, sector_value + 0:2),
+    series_block("Manufacturing", "2-digit", 2021:2023, manufacturing_value + 0:2),
+    series_block("Retail trade", "2-digit", 2021:2023, retail_value + c(0, 2, 4)),
+    series_block("Construction", "2-digit", 2022:2023, c(50.0, 52.0))
   )
   if (extra_year) {
-    lp_data <- rbind(lp_data, series_block("Canada", "All industries", "Aggregate", 2024L, sector_value + 3))
+    mfp_data <- rbind(mfp_data, series_block("Business sector", "Aggregate", 2024L, sector_value + 3))
   }
-  save(lp_data, file = fixture_path)
+  save(mfp_data, file = fixture_path)
 }
 
 make_fixture()
 
-# LP_DATA_FILE and RAW_DATA_POLL_MS are read once, at the moment app.R is
+# MFP_DATA_FILE and RAW_DATA_POLL_MS are read once, at the moment app.R is
 # sourced (RAW_DATA_READER is created then) -- so both must be set first.
-Sys.setenv(LP_DATA_FILE = fixture_path)
+Sys.setenv(MFP_DATA_FILE = fixture_path)
 Sys.setenv(RAW_DATA_POLL_MS = "200")
 
 # Run from the project root: Rscript scripts/verify_app.R
@@ -95,7 +89,7 @@ env <- new.env()
 sys.source("app.R", envir = env)
 
 cat("== Default industry is a valid, selectable choice at the default level ==\n")
-loaded <- env$load_lp_data(fixture_path)
+loaded <- env$load_mfp_data(fixture_path)
 aggregate_choices <- env$series_choices(
   loaded[loaded$IndustryLevel %in% env$industry_levels_upto(env$DEFAULT_INDUSTRY_LEVEL), ],
   "Industry", env$DEFAULT_INDUSTRY
@@ -113,13 +107,13 @@ cat("DEFAULT_INDUSTRY is present among Aggregate-level industry choices\n")
 # empirically) rather than any module-private reactive, since the latter
 # aren't reachable from outside moduleServer() at all.
 shiny::testServer(env$server, {
-  cat("== Rendering with the default variable/geography/level/industry (Trends) ==\n")
+  cat("== Rendering with the default variable/industry (Trends) ==\n")
   # Trends has no ui() here to supply its selected= defaults (testServer
   # exercises server() alone) -- seed the same values a real page load
   # would have sent.
   session$setInputs(
-    `trend-variable` = "Labour productivity", `trend-industry` = env$DEFAULT_INDUSTRY,
-    `trend-geography` = env$DEFAULT_GEOGRAPHY, `trend-year_range` = c(2021, 2023)
+    `trend-variable` = "Multifactor productivity", `trend-industry` = env$DEFAULT_INDUSTRY,
+    `trend-year_range` = c(2021, 2023)
   )
   session$flushReact()
   stopifnot(!is.null(output[["trend-chart"]]))
@@ -127,7 +121,7 @@ shiny::testServer(env$server, {
   cat("Trends renders + exports with the default single-series selection OK\n")
 
   cat("== Trends: its own (separate from Compare's) rebase/growth implementation ==\n")
-  session$setInputs(`trend-industry` = "Manufacturing", `trend-geography` = "Canada")
+  session$setInputs(`trend-industry` = "Manufacturing")
   session$flushReact()
   trend_export <- read.csv(output[["trend-download_csv"]], check.names = FALSE)
   stopifnot("GrowthPct" %in% names(trend_export))
@@ -140,37 +134,37 @@ shiny::testServer(env$server, {
   session$flushReact()
   cat("Trends' own rebase math matches Compare's shared formula OK\n")
 
-  cat("== Compare/Data start with the default pair already active -- no Add-series click needed ==\n")
+  cat("== Compare/Data start with the default series already active -- no Add-series click needed ==\n")
   # active_pairs() seeds itself from default_pair_row() unconditionally (see
   # tab_module_server()) -- unlike Trends' bare inputs above, this doesn't
   # depend on ui() ever having run.
-  session$setInputs(`bar-variable` = "Labour productivity", `bar-year_range` = c(2021, 2023))
+  session$setInputs(`bar-variable` = "Multifactor productivity", `bar-year_range` = c(2021, 2023))
   session$flushReact()
   stopifnot(!is.null(output[["bar-chart"]]))
   default_csv <- read.csv(output[["bar-download_csv"]])
   stopifnot(setequal(unique(default_csv$Industry), env$DEFAULT_INDUSTRY))
-  cat("Compare renders + exports only the default pair (All industries -- Canada) OK\n")
+  cat("Compare renders + exports only the default series (Business sector) OK\n")
 
   cat("== Industry detail is cumulative, not exact-tier ==\n")
   # A pure check of industry_levels_upto()/series_choices() against the
   # shared raw_data() -- doesn't need any module input (only Rankings has an
   # industry_level toggle at all; it's exercised with its own namespaced
   # input further down).
+  aggregate_choices2 <- env$series_choices(
+    raw_data()[raw_data()$IndustryLevel %in% env$industry_levels_upto("Aggregate"), ], "Industry"
+  )
+  stopifnot(identical(aggregate_choices2, "Business sector"))
   two_digit_choices <- env$series_choices(
     raw_data()[raw_data()$IndustryLevel %in% env$industry_levels_upto("2-digit"), ], "Industry"
   )
-  stopifnot("All industries" %in% two_digit_choices, "Manufacturing" %in% two_digit_choices)
-  three_digit_choices <- env$series_choices(
-    raw_data()[raw_data()$IndustryLevel %in% env$industry_levels_upto("3-digit"), ], "Industry"
-  )
-  stopifnot(all(c("All industries", "Manufacturing", "Food manufacturing") %in% three_digit_choices))
-  cat("2-digit adds to Aggregate, 3-digit includes every tier OK\n")
+  stopifnot(all(c("Business sector", "Manufacturing", "Retail trade", "Construction") %in% two_digit_choices))
+  cat("2-digit adds to Aggregate OK\n")
 
-  cat("== Adding a duplicate pair is a no-op; remove_pair/clear_pairs implement removal ==\n")
+  cat("== Adding a duplicate series is a no-op; remove_pair/clear_pairs implement removal ==\n")
   pair_click_count <- 0
-  add_bar_pair <- function(industry, geography) {
+  add_bar_pair <- function(industry) {
     pair_click_count <<- pair_click_count + 1
-    session$setInputs(`bar-pair_industry` = industry, `bar-pair_geography` = geography)
+    session$setInputs(`bar-pair_industry` = industry)
     session$flushReact()
     session$setInputs(`bar-add_pair` = pair_click_count)
     session$flushReact()
@@ -181,54 +175,32 @@ shiny::testServer(env$server, {
     session$setInputs(`bar-clear_pairs` = clear_click_count)
     session$flushReact()
   }
-  # Distinct (Industry, Geography) pairs currently active, read off the
-  # export rather than any module-private reactive -- only ever called after
-  # at least one add_bar_pair(), never right after a bare clear_bar_pairs()
-  # (with nothing added yet the export legitimately has nothing to build,
-  # which req() -- not validate() -- guards; see history_with_growth()).
-  bar_pairs <- function() {
-    unique(read.csv(output[["bar-download_csv"]])[c("Industry", "Geography")])
-  }
+  # Distinct Industries currently active, read off the export rather than
+  # any module-private reactive -- only ever called after at least one
+  # add_bar_pair(), never right after a bare clear_bar_pairs() (with
+  # nothing added yet the export legitimately has nothing to build, which
+  # req() -- not validate() -- guards; see history_with_growth()).
+  bar_industries <- function() unique(read.csv(output[["bar-download_csv"]])$Industry)
 
   clear_bar_pairs()
-  add_bar_pair("Manufacturing", "Canada")
-  add_bar_pair("Manufacturing", "Canada") # duplicate -- should not add a second row
-  stopifnot(nrow(bar_pairs()) == 1)
-  add_bar_pair("Retail trade", "Canada")
-  stopifnot(nrow(bar_pairs()) == 2)
-  session$setInputs(`bar-remove_pair` = env$pair_key("Manufacturing", "Canada"))
+  add_bar_pair("Manufacturing")
+  add_bar_pair("Manufacturing") # duplicate -- should not add a second row
+  stopifnot(length(bar_industries()) == 1)
+  add_bar_pair("Retail trade")
+  stopifnot(length(bar_industries()) == 2)
+  session$setInputs(`bar-remove_pair` = "Manufacturing")
   session$flushReact()
-  remaining <- bar_pairs()
-  stopifnot(nrow(remaining) == 1, remaining$Industry == "Retail trade")
-  cat("duplicate pairs are de-duplicated; remove_pair removes a specific pair OK\n")
+  remaining <- bar_industries()
+  stopifnot(length(remaining) == 1, remaining == "Retail trade")
+  cat("duplicate series are de-duplicated; remove_pair removes a specific series OK\n")
 
-  cat("== Comparing multiple industries within one geography ==\n")
+  cat("== Comparing multiple industries ==\n")
   clear_bar_pairs()
-  add_bar_pair("Manufacturing", "Canada")
-  add_bar_pair("Retail trade", "Canada")
+  add_bar_pair("Manufacturing")
+  add_bar_pair("Retail trade")
   stopifnot(!is.null(output[["bar-chart"]]))
-  stopifnot(setequal(bar_pairs()$Industry, c("Manufacturing", "Retail trade")))
-  stopifnot(all(bar_pairs()$Geography == "Canada"))
-  cat("multiple industries in one geography render onto one chart OK\n")
-
-  cat("== Comparing multiple geographies for one industry ==\n")
-  clear_bar_pairs()
-  add_bar_pair("Manufacturing", "Canada")
-  add_bar_pair("Manufacturing", "Ontario")
-  stopifnot(!is.null(output[["bar-chart"]]))
-  stopifnot(setequal(bar_pairs()$Geography, c("Canada", "Ontario")))
-  stopifnot(all(bar_pairs()$Industry == "Manufacturing"))
-  cat("one industry compared across geographies renders OK\n")
-
-  cat("== Comparing genuinely mixed pairs (different industry AND geography per series) ==\n")
-  clear_bar_pairs()
-  add_bar_pair("Retail trade", "Canada")
-  add_bar_pair("Manufacturing", "Ontario")
-  mixed <- bar_pairs()
-  stopifnot(nrow(mixed) == 2)
-  stopifnot(any(mixed$Industry == "Retail trade" & mixed$Geography == "Canada"))
-  stopifnot(any(mixed$Industry == "Manufacturing" & mixed$Geography == "Ontario"))
-  cat("a totally different industry in a totally different geography compares correctly OK\n")
+  stopifnot(setequal(bar_industries(), c("Manufacturing", "Retail trade")))
+  cat("multiple industries render onto one chart OK\n")
 
   cat("== Narrowing the time frame slider (and a single-period selection) ==\n")
   session$setInputs(`bar-year_range` = c(2022, 2023))
@@ -248,7 +220,7 @@ shiny::testServer(env$server, {
 
   cat("== YoY growth is computed against the year before the visible window ==\n")
   clear_bar_pairs()
-  add_bar_pair("Manufacturing", "Canada")
+  add_bar_pair("Manufacturing")
   session$setInputs(`bar-view_mode` = "growth", `bar-year_range` = c(2022, 2023))
   session$flushReact()
   grown <- read.csv(output[["bar-download_csv"]])
@@ -271,9 +243,9 @@ shiny::testServer(env$server, {
 
   cat("== Missing base-year data excludes a series from rebasing, not the app ==\n")
   clear_bar_pairs()
-  add_bar_pair("Manufacturing", "Canada")
-  add_bar_pair("Retail trade", "Canada")
-  add_bar_pair("Construction", "Canada") # only has 2022-2023 -- no 2021 row
+  add_bar_pair("Manufacturing")
+  add_bar_pair("Retail trade")
+  add_bar_pair("Construction") # only has 2022-2023 -- no 2021 row
   session$setInputs(`bar-rebase_toggle` = TRUE, `bar-base_year` = 2021, `bar-year_range` = c(2021, 2023))
   session$flushReact()
   dd <- read.csv(output[["bar-download_csv"]])
@@ -287,7 +259,7 @@ shiny::testServer(env$server, {
   session$flushReact()
   export_off <- read.csv(output[["bar-download_csv"]])
   stopifnot(!("RebasedValue" %in% names(export_off)))
-  stopifnot(all(c("Geography", "Industry", "Variable", "UOM", "GrowthPct") %in% names(export_off)))
+  stopifnot(all(c("Industry", "Variable", "UOM", "GrowthPct") %in% names(export_off)))
   session$setInputs(`bar-rebase_toggle` = TRUE, `bar-base_year` = 2021)
   session$flushReact()
   export_on <- read.csv(output[["bar-download_csv"]])
@@ -298,7 +270,7 @@ shiny::testServer(env$server, {
 
   cat("== Growth Ranking CAGR ==\n")
   session$setInputs(
-    `ranking-variable` = "Labour productivity", `ranking-geography` = "Canada",
+    `ranking-variable` = "Multifactor productivity",
     `ranking-industry_level` = "2-digit", `ranking-year_range` = c(2021, 2023)
   )
   session$flushReact()
@@ -336,7 +308,7 @@ shiny::testServer(env$server, {
   cat("Construction (missing the start-year value) is excluded from the ranking OK\n")
 })
 
-# The RAW_DATA_READER file-watcher itself (does a changed lp_data.RData
+# The RAW_DATA_READER file-watcher itself (does a changed mfp_data.RData
 # actually flow through to a running app without a restart?) is NOT
 # exercised above. A bare-bones repro -- a single testServer session that
 # does nothing but read raw_data(), rewrite the fixture, then poll
@@ -349,7 +321,7 @@ shiny::testServer(env$server, {
 # tied to any one session, not a bug in app.R, but it means the bare-bones
 # repro only demonstrates the mechanism in isolation -- it is not proof
 # the behavior holds in a real, fully-loaded running app. Confirm that by
-# hand: launch the app, edit lp_data.RData while it's running, and watch
+# hand: launch the app, edit mfp_data.RData while it's running, and watch
 # the charts update within the poll interval with no restart.
 
 unlink(fixture_path)
@@ -360,17 +332,17 @@ unlink(fixture_path)
 # section's env/fixture above having run first.
 cat("== UX-state: all-NA-DisplayValue/CAGR cases hit a message, not a silent blank chart ==\n")
 ux_fixture_path <- tempfile(fileext = ".RData")
-lp_data <- data.frame(
+mfp_data <- data.frame(
   # Value starts at 0 (not just "some other base year") so the *same*
   # fixture also serves the Rankings check below: compute_cagr() returns NA
   # for a StartValue of exactly 0 (see compute_cagr()'s own comment), so a
   # 2021-2023 CAGR window has nothing to show either.
-  Year = 2021:2023, Geography = "Canada", Variable = "Labour productivity",
-  Industry = "All industries", IndustryLevel = "Aggregate", Value = c(0, 1, 2),
-  UOM = "Chained (2017) dollars per hour", stringsAsFactors = FALSE
+  Year = 2021:2023, Variable = "Multifactor productivity",
+  Industry = "Business sector", IndustryLevel = "Aggregate", Value = c(0, 1, 2),
+  UOM = "Index, 2017=100", stringsAsFactors = FALSE
 )
-save(lp_data, file = ux_fixture_path)
-Sys.setenv(LP_DATA_FILE = ux_fixture_path)
+save(mfp_data, file = ux_fixture_path)
+Sys.setenv(MFP_DATA_FILE = ux_fixture_path)
 ux_env <- new.env()
 sys.source("app.R", envir = ux_env)
 
@@ -380,8 +352,8 @@ sys.source("app.R", envir = ux_env)
 # has 3 rows), so this exercises the renderPlotly-level gate specifically.
 shiny::testServer(ux_env$server, {
   session$setInputs(
-    `trend-variable` = "Labour productivity", `trend-industry` = "All industries",
-    `trend-geography` = "Canada", `trend-year_range` = c(2021, 2023),
+    `trend-variable` = "Multifactor productivity", `trend-industry` = "Business sector",
+    `trend-year_range` = c(2021, 2023),
     `trend-view_mode` = "level", `trend-rebase_toggle` = TRUE, `trend-base_year` = 1999
   )
   session$flushReact()
@@ -394,7 +366,7 @@ shiny::testServer(ux_env$server, {
 # validate() doesn't catch this either.
 shiny::testServer(ux_env$server, {
   session$setInputs(
-    `ranking-variable` = "Labour productivity", `ranking-geography` = "Canada",
+    `ranking-variable` = "Multifactor productivity",
     `ranking-industry_level` = "Aggregate", `ranking-year_range` = c(2021, 2023)
   )
   session$flushReact()
@@ -402,11 +374,11 @@ shiny::testServer(ux_env$server, {
 })
 
 # Compare (tab_module_server("bar", ...), id "bar"): active_pairs() starts
-# out holding the default (All industries, Canada) pair on its own (see
+# out holding the default (Business sector) series on its own (see
 # default_pair_row()) -- no Add-series click needed to reach this case.
 shiny::testServer(ux_env$server, {
   session$setInputs(
-    `bar-variable` = "Labour productivity", `bar-year_range` = c(2021, 2023),
+    `bar-variable` = "Multifactor productivity", `bar-year_range` = c(2021, 2023),
     `bar-view_mode` = "level", `bar-rebase_toggle` = TRUE, `bar-base_year` = 1999
   )
   session$flushReact()
@@ -415,21 +387,21 @@ shiny::testServer(ux_env$server, {
 unlink(ux_fixture_path)
 
 # == Data contract (see data_contract.R) ====================================
-# validate_data_contract()/LP_DATA_CONTRACT/RAW_STATCAN_CONTRACT are what
+# validate_data_contract()/MFP_DATA_CONTRACT/RAW_STATCAN_CONTRACT are what
 # turns a StatCan schema drift, a pipeline bug, or a 0-row/empty pull into a
 # clear thrown error instead of a silently wrong chart -- these checks
 # exercise that mechanism directly, plus the specific failure mode that
 # motivated it (see the first check below).
-cat("== Data contract: an empty (0-row) lp_data.RData degrades to Application unavailable, not a broken page ==\n")
+cat("== Data contract: an empty (0-row) mfp_data.RData degrades to Application unavailable, not a broken page ==\n")
 empty_fixture_path <- tempfile(fileext = ".RData")
-lp_data <- good_row()[0, ]
-save(lp_data, file = empty_fixture_path)
-Sys.setenv(LP_DATA_FILE = empty_fixture_path)
+mfp_data <- good_row()[0, ]
+save(mfp_data, file = empty_fixture_path)
+Sys.setenv(MFP_DATA_FILE = empty_fixture_path)
 contract_env <- new.env()
 sys.source("app.R", envir = contract_env)
 page_html <- as.character(contract_env$ui(list()))
 # Before validate_data_contract() existed, an empty-but-successfully-loaded
-# lp_data.RData sailed past every is.null() check in ui() and reached
+# mfp_data.RData sailed past every is.null() check in ui() and reached
 # sliderInput(min = min(integer(0)), max = max(integer(0)), ...) -- Inf/-Inf
 # bounds that don't error (confirmed empirically) but silently produce a
 # garbled date-range slider instead of a clear error state. Confirming the
@@ -453,61 +425,65 @@ expect_contract_error <- function(df, contract, pattern, label) {
 
 missing_col <- good_row()
 missing_col$UOM <- NULL
-expect_contract_error(missing_col, contract_env$LP_DATA_CONTRACT, "missing column(s): UOM", "missing column")
+expect_contract_error(missing_col, contract_env$MFP_DATA_CONTRACT, "missing column(s): UOM", "missing column")
 
 na_key <- good_row()
 na_key$Industry[2] <- NA
-expect_contract_error(na_key, contract_env$LP_DATA_CONTRACT, "column 'Industry' has 1 NA value", "NA in a key column")
+expect_contract_error(na_key, contract_env$MFP_DATA_CONTRACT, "column 'Industry' has 1 NA value", "NA in a key column")
 
 dupe_key <- rbind(good_row(), good_row()[1, ])
-expect_contract_error(dupe_key, contract_env$LP_DATA_CONTRACT, "duplicate row(s)", "duplicate natural key")
+expect_contract_error(dupe_key, contract_env$MFP_DATA_CONTRACT, "duplicate row(s)", "duplicate natural key")
 
 bad_enum <- good_row()
-bad_enum$IndustryLevel[1] <- "4-digit"
-expect_contract_error(bad_enum, contract_env$LP_DATA_CONTRACT, "outside its expected set", "value outside a declared enum")
+bad_enum$IndustryLevel[1] <- "3-digit"
+expect_contract_error(bad_enum, contract_env$MFP_DATA_CONTRACT, "outside its expected set", "value outside a declared enum")
 
 extra_col_ok <- good_row()
 extra_col_ok$FutureColumn <- "whatever"
-contract_env$validate_data_contract(extra_col_ok, contract_env$LP_DATA_CONTRACT, "test") # should not throw
+contract_env$validate_data_contract(extra_col_ok, contract_env$MFP_DATA_CONTRACT, "test") # should not throw
 cat("forward-compatible: an unrecognized extra column is tolerated, not rejected OK\n")
 
 raw_missing_col <- data.frame(REF_DATE = 2021, GEO = "Canada", VALUE = 1, UOM = "x", stringsAsFactors = FALSE)
 expect_contract_error(
   raw_missing_col, contract_env$RAW_STATCAN_CONTRACT,
-  "missing column(s): Labour productivity and related measures, Industry, Hierarchy for Industry",
+  paste0(
+    "missing column(s): Multifactor productivity and related variables, ",
+    "North American Industry Classification System (NAICS), ",
+    "Hierarchy for North American Industry Classification System (NAICS)"
+  ),
   "raw StatCan pull missing a depended-on column"
 )
 
-cat("== Data contract: cached_load_lp_data() is keyed on (path, mtime), not mtime alone ==\n")
+cat("== Data contract: cached_load_mfp_data() is keyed on (path, mtime), not mtime alone ==\n")
 # Regression check for a real bug this rewrite surfaced: keyed on mtime
 # alone, a second distinct path read in the same process (two files
 # happening to share an mtime, or -- as here -- simply any second path read
 # after a first one) could silently serve the first path's cached data
 # instead of ever being told apart. Only matters when one R process reads
-# more than one path (LP_DATA_FILE is fixed for the life of a real deployed
+# more than one path (MFP_DATA_FILE is fixed for the life of a real deployed
 # app) -- which is exactly what this test file does throughout, swapping
 # fixtures across many sys.source() environments.
 path_a <- tempfile(fileext = ".RData")
-lp_data <- good_row()
-save(lp_data, file = path_a)
+mfp_data <- good_row()
+save(mfp_data, file = path_a)
 path_b <- tempfile(fileext = ".RData")
-lp_data <- good_row()
-lp_data$Value <- lp_data$Value + 1000
-save(lp_data, file = path_b)
-df_a <- contract_env$cached_load_lp_data(path_a)
-df_b <- contract_env$cached_load_lp_data(path_b)
+mfp_data <- good_row()
+mfp_data$Value <- mfp_data$Value + 1000
+save(mfp_data, file = path_b)
+df_a <- contract_env$cached_load_mfp_data(path_a)
+df_b <- contract_env$cached_load_mfp_data(path_b)
 stopifnot(!identical(df_a$Value, df_b$Value))
 cat("reading a second, different path returns that path's own data, not a stale cached copy OK\n")
 unlink(c(path_a, path_b))
 
-# == safe_load_lp_data() recovery (its own section: needs a fresh env) =====
-cat("== UX-state: safe_load_lp_data() returns NULL + warns on a failed read, and recovers cleanly next time ==\n")
-# Not a "safe_cached_load_lp_data()" / RAW_DATA_STALE-flag mechanism -- no
+# == safe_load_mfp_data() recovery (its own section: needs a fresh env) =====
+cat("== UX-state: safe_load_mfp_data() returns NULL + warns on a failed read, and recovers cleanly next time ==\n")
+# Not a "safe_cached_load_mfp_data()" / RAW_DATA_STALE-flag mechanism -- no
 # such function or reactiveVal exists anywhere in app.R (confirmed by
 # grep); an earlier version of this check assumed one, and since it called
 # a function that didn't exist, was crashing this entire script before it
-# ever reached the summary below. safe_load_lp_data() does something
-# simpler: tryCatch(cached_load_lp_data(...)) returning NULL and warn()ing
+# ever reached the summary below. safe_load_mfp_data() does something
+# simpler: tryCatch(cached_load_mfp_data(...)) returning NULL and warn()ing
 # on failure (see its own comment in app.R) -- there's no "serve the
 # last-known-good copy while flagging it stale" fallback today. This checks
 # that real, current contract instead: a failed read returns NULL and
@@ -517,18 +493,18 @@ cat("== UX-state: safe_load_lp_data() returns NULL + warns on a failed read, and
 # call, not a bug -- see the audit summary.)
 recovery_env <- new.env()
 good_path <- tempfile(fileext = ".RData")
-lp_data <- good_row()
-save(lp_data, file = good_path)
-Sys.setenv(LP_DATA_FILE = good_path)
+mfp_data <- good_row()
+save(mfp_data, file = good_path)
+Sys.setenv(MFP_DATA_FILE = good_path)
 sys.source("app.R", envir = recovery_env)
 
-first <- recovery_env$safe_load_lp_data(good_path)
+first <- recovery_env$safe_load_mfp_data(good_path)
 stopifnot(is.data.frame(first), nrow(first) == 3)
 
 missing_path <- tempfile(fileext = ".RData") # never created -- simulates the file disappearing
 warned <- FALSE
 failed <- withCallingHandlers(
-  recovery_env$safe_load_lp_data(missing_path),
+  recovery_env$safe_load_mfp_data(missing_path),
   warning = function(w) {
     warned <<- TRUE
     invokeRestart("muffleWarning")
@@ -536,9 +512,9 @@ failed <- withCallingHandlers(
 )
 stopifnot(is.null(failed), warned)
 
-recovered <- recovery_env$safe_load_lp_data(good_path)
+recovered <- recovery_env$safe_load_mfp_data(good_path)
 stopifnot(identical(first, recovered))
 cat("a read failure returns NULL and warns; a later successful read for the same path recovers cleanly OK\n")
 unlink(good_path)
 
-cat("\nSUMMARY: all checks above passed (interactive-flow, UX-state, data-contract, and safe_load_lp_data recovery).\n")
+cat("\nSUMMARY: all checks above passed (interactive-flow, UX-state, data-contract, and safe_load_mfp_data recovery).\n")

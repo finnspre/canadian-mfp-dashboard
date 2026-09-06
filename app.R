@@ -5,7 +5,7 @@ library(plotly)
 library(DT)
 library(htmltools)
 
-# STATCAN_TABLE_ID / LP_DATA_CONTRACT / validate_data_contract() -- shared
+# STATCAN_TABLE_ID / MFP_DATA_CONTRACT / validate_data_contract() -- shared
 # with data_pipeline.R so both agree on exactly one definition of "what does
 # this table's data look like" (see that file's own header comment). Plain
 # relative path, not an absolute one -- Shiny always runs app.R with the
@@ -27,7 +27,7 @@ library(htmltools)
 # .GlobalEnv instead of being cleanly scoped to this file.
 source("data_contract.R", local = TRUE)
 
-LP_DATA_FILE <- Sys.getenv("LP_DATA_FILE", "lp_data.RData")
+MFP_DATA_FILE <- Sys.getenv("MFP_DATA_FILE", "mfp_data.RData")
 
 # Appends a ?v=<mtime> cache-buster to a www/ asset path, so editing e.g.
 # tree_select.js takes effect on a plain reload instead of silently
@@ -106,55 +106,65 @@ GRIDLINE <- "#D9D9D9"      # Light Grey -- already the exact csls.ca value -- de
 CHART_SURFACE <- "#FFFFFF" # Snow White -- already the exact csls.ca value
 FONT_FAMILY <- "Roboto, Arial, sans-serif" # matches csls.ca's --font-base fallback stack exactly
 
-DEFAULT_VARIABLE <- "Labour productivity"
-DEFAULT_GEOGRAPHY <- "Canada"
-DEFAULT_INDUSTRY <- "All industries"
+DEFAULT_VARIABLE <- "Multifactor productivity"
+DEFAULT_INDUSTRY <- "Business sector"
 
-GEOGRAPHY_ORDER <- c(
-  "Canada", "Newfoundland and Labrador", "Prince Edward Island", "Nova Scotia",
-  "New Brunswick", "Quebec", "Ontario", "Manitoba", "Saskatchewan", "Alberta",
-  "British Columbia", "Yukon", "Northwest Territories", "Nunavut"
-)
+# Table 36-10-0208-01 covers Canada only -- no provincial/territorial
+# breakdown the way the old labour productivity table had (see
+# data_pipeline.R) -- so there's no GEOGRAPHY_ORDER/DEFAULT_GEOGRAPHY here,
+# and no Geography picker anywhere below: a dropdown with exactly one
+# possible value would serve no purpose.
 VARIABLE_ORDER <- c(
-  "Labour productivity", "Real value added", "Nominal value added",
-  "Total number of jobs", "Hours worked for all jobs",
-  "Annual average number of hours worked for all jobs",
-  "Total compensation for all jobs", "Total compensation per hour worked",
-  "Unit labour cost", "Unit labour cost in US dollars", "Labour share"
+  "Multifactor productivity", "Labour productivity", "Capital productivity",
+  "Real gross domestic product (GDP)", "Labour input", "Hours worked",
+  "Labour composition",
+  "Labour input of workers with primary or secondary education",
+  "Labour input of workers with some or completed post-secondary certificate or diploma",
+  "Labour input of workers with university degree or above",
+  "Capital input", "Capital stock", "Capital composition",
+  "Capital input of information and communications technologies",
+  "Capital input of non-information and communications technologies",
+  "Combined labour and capital inputs", "Gross domestic product (GDP)",
+  "Labour compensation",
+  "Labour compensation of workers with primary or secondary education",
+  "Labour compensation of workers with some or completed post-secondary certificate or diploma",
+  "Labour compensation of workers with university degree or above",
+  "Capital cost",
+  "Capital cost of information and communications technologies",
+  "Capital cost of non-information and communications technologies",
+  "Contribution of capital intensity to labour productivity growth",
+  "Contribution of labour composition to labour productivity growth"
 )
 
 # The Industry detail toggle on the Rankings tab -- selects a *maximum*
-# level of detail, not an exact one, so "3-digit" still includes the
-# Aggregate and 2-digit rows too (see industry_levels_upto() below).
+# level of detail, not an exact one, so "2-digit" still includes the
+# Aggregate rows too (see industry_levels_upto() below). Table 36-10-0208-01
+# has no tier deeper than this (see data_pipeline.R), so unlike the old
+# labour productivity table there's no "3-digit" option to offer.
 DEFAULT_INDUSTRY_LEVEL <- "Aggregate"
-INDUSTRY_LEVEL_ORDER <- c("Aggregate", "2-digit", "3-digit")
+INDUSTRY_LEVEL_ORDER <- c("Aggregate", "2-digit")
 
 # Rankings tab: row count above which the chart switches from a single
 # fixed-height, one-side-labelled layout to a taller, scrollable one with
 # labels split across both sides (see ranking_tab_server()'s output$chart
-# and output$chart_container). In practice only "Sub-sector level" (up to
-# ~139 rows -- 3 Aggregate + 25 2-digit + 111 3-digit industries in the
-# real data) crosses this; Aggregate (3 rows) and Sector level (~28 rows)
-# stay comfortably under it and keep today's exact appearance.
+# and output$chart_container). Table 36-10-0208-01 tops out at 21
+# industries total (5 Aggregate + 16 2-digit -- see data_pipeline.R), so in
+# practice neither level comes close to crossing this today; kept as
+# headroom rather than removed, in case a future table swap adds enough
+# 2-digit detail to need it.
 RANKING_CHART_ROW_THRESHOLD <- 40
 RANKING_CHART_PX_PER_ROW <- 28
 RANKING_CHART_TICKFONT_SPLIT <- 10
 
 # Plain-language explanation shown below the main panel for the currently
-# selected variable. "Total number of jobs" maps to "" since it needs no
-# explanation -- renderUI treats an empty/missing entry as "show nothing".
-VARIABLE_DEFINITIONS <- c(
-  "Total number of jobs" = "",
-  "Hours worked for all jobs" = "The total number of hours that a person devotes to work, whether paid or unpaid.",
-  "Annual average number of hours worked for all jobs" = "Hours worked for all jobs divided by total number of jobs.",
-  "Total compensation for all jobs" = "All payments in cash or in-kind made by domestic producers to workers for services rendered.",
-  "Nominal value added" = "The dollar value of what an industry produces, minus the cost of the inputs (materials, energy, etc.) it used up to produce it. Measured in today's dollars, so it is affected by inflation.",
-  "Real value added" = "The total dollar value of an industry's output minus the cost of the inputs (materials, energy, etc.) used to produce it. Adjusted by Statistics Canada to 2017 dollars by default, removing the effects of inflation.",
-  "Labour productivity" = "A measure of how efficiently goods and services are produced by workers. Calculated by Statistics Canada as real value added divided by total hours worked.",
-  "Total compensation per hour worked" = "Total compensation for all jobs divided by number of hours worked.",
-  "Unit labour cost" = "Measures the average cost of labour required to produce one unit of output. Calculated by Statistics Canada as the current dollar labour compensation divided by real value added (or equivalently labour compensation per hour worked to labour productivity). It rises when hourly compensation grows faster than labour productivity, and is widely used to measure inflation pressure from wage growth.",
-  "Unit labour cost in US dollars" = "Equivalent to the ratio of the Canadian unit labour cost to the exchange rate (the U.S. dollar value expressed in Canadian dollars, based on the monthly average).",
-  "Labour share" = "The ratio of total compensation as a percentage of the nominal value added."
+# selected variable -- placeholder text for every variable until real
+# definitions are written; renderUI still treats an empty/missing entry as
+# "show nothing" (see variable_definition_ui() below), so a future entry can
+# still be blanked out for a self-explanatory variable the same way the old
+# labour productivity dashboard did for "Total number of jobs".
+VARIABLE_DEFINITIONS <- setNames(
+  rep("Variable definition comes here", length(VARIABLE_ORDER)),
+  VARIABLE_ORDER
 )
 
 # Plain-language explanation for the currently selected Variable, shown
@@ -176,159 +186,52 @@ industry_levels_upto <- function(level) {
   INDUSTRY_LEVEL_ORDER[seq_len(idx)]
 }
 
-# Immediate parent of each 2-digit and 3-digit industry, derived once from
-# the "Hierarchy for Industry" dot-path in Stats Canada table 36-10-0480-01
-# (that column isn't kept in lp_data.RData -- only the Industry name and
-# IndustryLevel survive the pipeline). 2-digit sectors nest under Business/
-# Non-business sector industries; 3-digit subsectors nest under their
-# 2-digit sector. Used only to order/indent the Industry picker.
+# Immediate parent of each 2-digit sub-sector and special aggregation,
+# derived once from the "Hierarchy for North American Industry
+# Classification System (NAICS)" dot-path in Stats Canada table
+# 36-10-0208-01 (that column isn't kept in mfp_data.RData -- only the
+# Industry name and IndustryLevel survive the pipeline). Every 2-digit
+# sub-sector nests under "Business sector", the table's sole aggregate/root
+# -- unlike the old labour productivity table there's no business/
+# non-business split here. The 4 "special aggregation" rows (a goods/
+# services split and a durable/non-durable manufacturing split) aren't
+# literally nested under anything in StatCan's own dot-path (see
+# data_pipeline.R's IndustryDepth comment), but are real subsets of
+# "Business sector" (the 2 manufacturing ones, of "Manufacturing"
+# specifically) -- nested here for a more useful picker tree, not because
+# the raw hierarchy encodes it. Used only to order/indent the Industry
+# picker.
 INDUSTRY_PARENT <- c(
-  "Accommodation and food services" = "Business sector industries",
-  "Administrative and support, waste management and remediation services" = "Business sector industries",
-  "Agriculture, forestry, fishing and hunting" = "Business sector industries",
-  "Arts, entertainment and recreation" = "Business sector industries",
-  "Construction" = "Business sector industries",
-  "Educational services" = "Business sector industries",
-  "Federal government services" = "Non-business sector industries",
-  "Finance and insurance" = "Business sector industries",
-  "Government educational services" = "Non-business sector industries",
-  "Government health services" = "Non-business sector industries",
-  "Health care and social assistance" = "Business sector industries",
-  "Holding companies" = "Business sector industries",
-  "Information and cultural industries" = "Business sector industries",
-  "Local, municipal and Indigenous government services" = "Non-business sector industries",
-  "Manufacturing" = "Business sector industries",
-  "Mining and oil and gas extraction" = "Business sector industries",
-  "Non-profit institutions" = "Non-business sector industries",
-  "Other private services" = "Business sector industries",
-  "Professional, scientific and technical services" = "Business sector industries",
-  "Provincial and territorial government services" = "Non-business sector industries",
-  "Real estate, rental and leasing" = "Business sector industries",
-  "Retail trade" = "Business sector industries",
-  "Transportation and warehousing" = "Business sector industries",
-  "Utilities" = "Business sector industries",
-  "Wholesale trade" = "Business sector industries",
-  "Accommodation services" = "Accommodation and food services",
-  "Activities related to credit intermediation" = "Finance and insurance",
-  "Administrative and support services" = "Administrative and support, waste management and remediation services",
-  "Advertising, public relations, and related services" = "Professional, scientific and technical services",
-  "Air transportation" = "Transportation and warehousing",
-  "Ambulatory health care services" = "Non-profit institutions",
-  "Amusement, gambling and recreation industries" = "Arts, entertainment and recreation",
-  "Architectural, engineering and related services" = "Professional, scientific and technical services",
-  "Beverage and tobacco product manufacturing" = "Manufacturing",
-  "Broadcasting (except internet)" = "Information and cultural industries",
-  "Building material and garden equipment and supplies dealers" = "Retail trade",
-  "Building material and supplies wholesaler-distributors" = "Wholesale trade",
-  "Chemical manufacturing" = "Manufacturing",
-  "Clothing and clothing accessories stores" = "Retail trade",
-  "Clothing and leather and allied product manufacturing" = "Manufacturing",
-  "Community colleges and C.E.G.E.P.s" = "Government educational services",
-  "Computer and electronic product manufacturing" = "Manufacturing",
-  "Computer systems design and related services" = "Professional, scientific and technical services",
-  "Crop and animal production" = "Agriculture, forestry, fishing and hunting",
-  "Data processing, hosting, and related services" = "Information and cultural industries",
-  "Defence services" = "Federal government services",
-  "Depository credit intermediation and monetary authorities" = "Finance and insurance",
-  "Electric power generation, transmission and distribution" = "Utilities",
-  "Electrical equipment, appliance and component manufacturing" = "Manufacturing",
-  "Electronics and appliance stores" = "Retail trade",
-  "Elementary and secondary schools" = "Government educational services",
-  "Engineering construction" = "Construction",
-  "Fabricated metal product manufacturing" = "Manufacturing",
-  "Farm product wholesaler-distributors" = "Wholesale trade",
-  "Federal government services (excluding defence)" = "Federal government services",
-  "Financial investment services, funds and other financial vehicles" = "Finance and insurance",
-  "Fishing, hunting and trapping" = "Agriculture, forestry, fishing and hunting",
-  "Food and beverage stores" = "Retail trade",
-  "Food manufacturing" = "Manufacturing",
-  "Food services and drinking places" = "Accommodation and food services",
-  "Food, beverage and tobacco wholesaler-distributors" = "Wholesale trade",
-  "Forestry and logging" = "Agriculture, forestry, fishing and hunting",
-  "Furniture and home furnishings stores" = "Retail trade",
-  "Furniture and related product manufacturing" = "Manufacturing",
-  "Gasoline stations" = "Retail trade",
-  "General merchandise stores" = "Retail trade",
-  "Grant-making, civic, and professional and similar organizations" = "Non-profit institutions",
-  "Health and personal care stores" = "Retail trade",
-  "Health care" = "Health care and social assistance",
-  "Hospitals" = "Government health services",
-  "Indigenous government services" = "Local, municipal and Indigenous government services",
-  "Insurance carriers and related activities" = "Finance and insurance",
-  "Legal, accounting and related services" = "Professional, scientific and technical services",
-  "Lessors of non-financial intangible assets (except copyrighted works)" = "Real estate, rental and leasing",
-  "Machinery manufacturing" = "Manufacturing",
-  "Machinery, equipment and supplies wholesaler-distributors" = "Wholesale trade",
-  "Mining and quarrying (except oil and gas)" = "Mining and oil and gas extraction",
-  "Miscellaneous manufacturing" = "Manufacturing",
-  "Miscellaneous store retailers" = "Retail trade",
-  "Miscellaneous wholesaler-distributors" = "Wholesale trade",
-  "Motion picture and sound recording industries" = "Information and cultural industries",
-  "Motor vehicle and parts dealers" = "Retail trade",
-  "Motor vehicle and parts wholesaler-distributors" = "Wholesale trade",
-  "Municipal government services" = "Local, municipal and Indigenous government services",
-  "Natural gas distribution, water, sewage and other systems" = "Utilities",
-  "Non-depository credit intermediation" = "Finance and insurance",
-  "Non-metallic mineral product manufacturing" = "Manufacturing",
-  "Non-profit arts, entertainment and recreation" = "Non-profit institutions",
-  "Non-profit education institutions" = "Non-profit institutions",
-  "Non-profit welfare organizations" = "Non-profit institutions",
-  "Non-residential building construction" = "Construction",
-  "Non-store retailers" = "Retail trade",
-  "Nursing and residential care facilities" = "Government health services",
-  "Oil and gas extraction" = "Mining and oil and gas extraction",
-  "Other activities of the construction industry" = "Construction",
-  "Other educational services" = "Government educational services",
-  "Other information services" = "Information and cultural industries",
-  "Other non-profit institutions serving households" = "Non-profit institutions",
-  "Other professional, scientific and technical services including scientific research and development" = "Professional, scientific and technical services",
-  "Paper manufacturing" = "Manufacturing",
-  "Performing arts, spectator sports and related industries, and heritage institutions" = "Arts, entertainment and recreation",
-  "Personal and household goods wholesaler-distributors" = "Wholesale trade",
-  "Personal services and private households" = "Other private services",
-  "Petroleum and coal product manufacturing" = "Manufacturing",
-  "Petroleum product wholesaler-distributors" = "Wholesale trade",
-  "Pipeline transportation" = "Transportation and warehousing",
-  "Plastics and rubber products manufacturing" = "Manufacturing",
-  "Postal service and couriers and messengers" = "Transportation and warehousing",
-  "Primary metal manufacturing" = "Manufacturing",
-  "Printing and related support activities" = "Manufacturing",
-  "Private educational services" = "Educational services",
-  "Professional and similar organizations" = "Other private services",
-  "Publishing industries (except internet)" = "Information and cultural industries",
-  "Rail transportation" = "Transportation and warehousing",
-  "Real estate" = "Real estate, rental and leasing",
-  "Religious organizations" = "Non-profit institutions",
-  "Rental and leasing services" = "Real estate, rental and leasing",
-  "Repair and maintenance" = "Other private services",
-  "Repair construction" = "Construction",
-  "Residential building construction" = "Construction",
-  "Social assistance" = "Health care and social assistance",
-  "Sporting goods, hobby, book and music stores" = "Retail trade",
-  "Support activities for agriculture and forestry" = "Agriculture, forestry, fishing and hunting",
-  "Support activities for mining and oil and gas extraction" = "Mining and oil and gas extraction",
-  "Support activities for transportation" = "Transportation and warehousing",
-  "Telecommunications" = "Information and cultural industries",
-  "Textile and textile product mills" = "Manufacturing",
-  "Transit, ground passenger and scenic and sightseeing transportation" = "Transportation and warehousing",
-  "Transportation equipment manufacturing" = "Manufacturing",
-  "Truck transportation" = "Transportation and warehousing",
-  "Universities" = "Government educational services",
-  "Warehousing and storage" = "Transportation and warehousing",
-  "Waste management and remediation services" = "Administrative and support, waste management and remediation services",
-  "Water transportation" = "Transportation and warehousing",
-  "Wholesale electronic markets, and agents and brokers" = "Wholesale trade",
-  "Wood product manufacturing" = "Manufacturing"
+  "Agriculture, forestry, fishing and hunting" = "Business sector",
+  "Mining and oil and gas extraction" = "Business sector",
+  "Utilities" = "Business sector",
+  "Construction" = "Business sector",
+  "Manufacturing" = "Business sector",
+  "Wholesale trade" = "Business sector",
+  "Retail trade" = "Business sector",
+  "Transportation and warehousing" = "Business sector",
+  "Information and cultural industries" = "Business sector",
+  "Finance, insurance, real estate and renting and leasing" = "Business sector",
+  "Professional, scientific and technical services" = "Business sector",
+  "Other services (except public administration)" = "Business sector",
+  "Administrative and support, waste management and remediation services" = "Business sector",
+  "Arts, entertainment and recreation" = "Business sector",
+  "Accommodation and food services" = "Business sector",
+  "Other private services" = "Business sector",
+  "Business sector, goods, special aggregation" = "Business sector",
+  "Business sector, services, special aggregation" = "Business sector",
+  "Non-durable manufacturing, special aggregation" = "Manufacturing",
+  "Durable manufacturing, special aggregation" = "Manufacturing"
 )
 
 # Nested tree_data for the custom treeSelectInput widget (see
 # www/tree_select.js for the paired Shiny.InputBinding), Industry's own
 # case: each node is list(value=, label=, children=list(...)), built by
-# walking INDUSTRY_PARENT from the 3 root aggregates. Unlike the old flat
-# indented-label vector this replaces, the JS side gets real parent/child
-# nesting, which is what lets it render a collapsible tree and auto-expand
-# ancestors of a search match. Variable/Geography have no hierarchy of
-# their own, so they build tree_data with flat_tree_nodes() instead (below).
+# walking INDUSTRY_PARENT from the single root aggregate ("Business
+# sector"). Unlike a flat indented-label vector, the JS side gets real
+# parent/child nesting, which is what lets it render a collapsible tree and
+# auto-expand ancestors of a search match. Variable has no hierarchy of its
+# own, so it builds tree_data with flat_tree_nodes() instead (below).
 industry_tree_nodes <- function(df) {
   available <- unique(df$Industry)
 
@@ -340,7 +243,7 @@ industry_tree_nodes <- function(df) {
     list(value = name, label = name, children = lapply(children_of(name), build_node))
   }
 
-  roots <- intersect(c("All industries", "Business sector industries", "Non-business sector industries"), available)
+  roots <- intersect("Business sector", available)
   nodes <- lapply(roots, build_node)
 
   # Anything present but not reachable from the roots above (e.g. a future
@@ -360,16 +263,16 @@ flatten_tree_values <- function(node) {
 }
 
 # tree_data for a treeSelectInput() with no hierarchy of its own -- every
-# node is a root, `children = list()` -- used for Variable/Geography, where
+# node is a root, `children = list()` -- used for Variable, where
 # industry_tree_nodes()'s parent-walk doesn't apply. `choices` is expected
-# already in display order (e.g. series_choices()'s VARIABLE_ORDER/
-# GEOGRAPHY_ORDER); unlike industry_tree_nodes(), this doesn't re-sort.
+# already in display order (e.g. series_choices()'s VARIABLE_ORDER); unlike
+# industry_tree_nodes(), this doesn't re-sort.
 flat_tree_nodes <- function(choices) {
   lapply(choices, function(x) list(value = x, label = x, children = list()))
 }
 
 # UI generator for the collapsible tree-style dropdown picker used for
-# Variable/Geography/Industry alike (Trends' sidebar; Industry alone on
+# Variable/Industry alike (Trends'/Rankings' sidebar; Industry alone on
 # Compare/Data). Mirrors selectizeInput's single-value contract: the value
 # Shiny sees is always a plain character(1), or "" for "nothing selected"
 # -- never NULL/character(0) -- so req()/isTruthy() gating elsewhere didn't
@@ -426,68 +329,45 @@ csls_notify <- function(ui, type = c("default", "message", "warning", "error"), 
   showNotification(ui, type = match.arg(type), duration = duration, ...)
 }
 
-# data_pipeline.R pulls Stats Canada table 36-10-0480-01 then shapes/
-# renames it into Year/Geography/Variable/Industry/
-# IndustryLevel/Value/UOM columns.
-load_lp_data <- function(path = LP_DATA_FILE) {
+# data_pipeline.R pulls Stats Canada table 36-10-0208-01 then shapes/
+# renames it into Year/Variable/Industry/IndustryLevel/Value/UOM columns.
+load_mfp_data <- function(path = MFP_DATA_FILE) {
   if (!file.exists(path)) {
     stop(
-      "lp_data.RData not found. Run data_pipeline.R from this project folder ",
-      "first to pull productivity data from Statistics Canada."
+      "mfp_data.RData not found. Run data_pipeline.R from this project folder ",
+      "first to pull multifactor productivity data from Statistics Canada."
     )
   }
   e <- new.env()
   load(path, envir = e)
-  df <- e$lp_data
-  # data_pipeline.R's own mutate() chain already strips this same "X ==> Y"
-  # suffix before ever writing lp_data.RData (see its comment there for what
-  # the suffix means), which makes this a no-op against today's pipeline
-  # output -- kept anyway as cheap insurance against the two layers drifting
-  # (e.g. a future pipeline change that reintroduces the raw StatCan naming
-  # without recalling this), since sub() on a string that's already clean
-  # costs nothing. If load_lp_data() is ever ported to a future table/
-  # dashboard (see data_contract.R) that never had this quirk to begin with,
-  # this whole block is safe to delete rather than something to port too.
-  #
-  # Regex over the handful of *distinct* Industry values, then remap by
-  # match() -- not sub() over all ~588k rows directly. Same result (verified
-  # byte-identical against the real data), ~32x faster (0.79s -> 0.02s on
-  # this dataset): only ~139 distinct Industry strings exist no matter how
-  # many rows there are, so the row-wise regex was redoing the same handful
-  # of substitutions hundreds of thousands of times over.
-  industry_uniq <- unique(df$Industry)
-  industry_uniq_clean <- sub("\\s*==>.*$", "", industry_uniq)
-  df$Industry <- industry_uniq_clean[match(df$Industry, industry_uniq)]
+  df <- e$mfp_data
 
-  # Fail loudly here -- not just in data_pipeline.R -- because lp_data.RData
+  # Fail loudly here -- not just in data_pipeline.R -- because mfp_data.RData
   # is its own process boundary: this file can be hand-edited, land from a
   # differently-shaped pipeline run, or simply be corrupt, independently of
-  # whatever data_pipeline.R itself validated before saving it. safe_load_lp_data()
-  # (the only realistic caller of load_lp_data() -- see its own comment)
+  # whatever data_pipeline.R itself validated before saving it. safe_load_mfp_data()
+  # (the only realistic caller of load_mfp_data() -- see its own comment)
   # already turns any thrown error here into a NULL sentinel that ui()/every
   # tab's scoped_raw() already know how to show a clean message for, so a
   # contract violation degrades exactly like a missing/corrupt file rather
   # than needing a UI state of its own. This is also what stops a 0-row
   # (e.g. an empty StatCan pull that made it all the way through) or
-  # empty-but-technically-loaded lp_data.RData from silently reaching ui()
+  # empty-but-technically-loaded mfp_data.RData from silently reaching ui()
   # and building sliderInput(min=Inf, max=-Inf, ...)-style broken widgets --
   # confirmed empirically to warn rather than error, so ui() previously
   # would have finished "successfully" with a garbled page instead of the
   # clean "Application unavailable" state this now produces.
-  validate_data_contract(df, LP_DATA_CONTRACT, paste0(path, " (loaded contract)"))
+  validate_data_contract(df, MFP_DATA_CONTRACT, paste0(path, " (loaded contract)"))
 
   # INDUSTRY_PARENT is a hand-maintained lookup, not derived from this data
   # pull -- industry_choices_tree() already fails *soft* for anything
   # missing from it (shows up unindented at the end of the picker instead
   # of disappearing), but that's easy to miss visually. Log it loudly too,
   # so a future StatCan rename/addition doesn't drift silently forever.
-  unmapped <- setdiff(
-    unique(df$Industry),
-    c("All industries", "Business sector industries", "Non-business sector industries", names(INDUSTRY_PARENT))
-  )
+  unmapped <- setdiff(unique(df$Industry), c("Business sector", names(INDUSTRY_PARENT)))
   if (length(unmapped) > 0) {
     warning(
-      "load_lp_data(): ", length(unmapped), " industry name(s) not in INDUSTRY_PARENT -- ",
+      "load_mfp_data(): ", length(unmapped), " industry name(s) not in INDUSTRY_PARENT -- ",
       "they'll still appear in pickers (unindented, at the end) instead of nested under their ",
       "true parent until INDUSTRY_PARENT is updated: ", paste(unmapped, collapse = ", "),
       call. = FALSE
@@ -496,19 +376,19 @@ load_lp_data <- function(path = LP_DATA_FILE) {
 
   df
 }
-# Shared cache for load_lp_data(), keyed on the file's mtime -- same
+# Shared cache for load_mfp_data(), keyed on the file's mtime -- same
 # invalidation check reactiveFileReader (below) already does internally, but
 # usable from ui(), which runs per HTTP request *outside* any reactive
 # context (reactiveFileReader requires one). Without this, ui() and
-# RAW_DATA_READER each independently reloaded the ~1.6s-to-parse RData file,
-# so a repeat page view paid that cost again even though the server already
-# had an identical copy sitting in RAW_DATA_READER's own reactive cache.
+# RAW_DATA_READER each independently reloaded the RData file, so a repeat
+# page view paid that parse cost again even though the server already had
+# an identical copy sitting in RAW_DATA_READER's own reactive cache.
 # session = NULL-style sharing: one mutable env for the whole R process, not
 # per-session -- consistent with RAW_DATA_READER's own sharing model below.
-LP_DATA_CACHE <- new.env(parent = emptyenv())
-cached_load_lp_data <- function(path = LP_DATA_FILE) {
+MFP_DATA_CACHE <- new.env(parent = emptyenv())
+cached_load_mfp_data <- function(path = MFP_DATA_FILE) {
   mtime <- file.mtime(path)
-  # Keyed on (path, mtime), not mtime alone -- LP_DATA_FILE never actually
+  # Keyed on (path, mtime), not mtime alone -- MFP_DATA_FILE never actually
   # changes within one running app process (it's set once, at source time,
   # from an env var), so this only matters for a caller that passes a
   # different `path` than the default within the same R session (as
@@ -516,46 +396,46 @@ cached_load_lp_data <- function(path = LP_DATA_FILE) {
   # fixture paths against the same sourced app.R environment) -- without the
   # path check, two different files that happened to share an mtime would
   # silently serve each other's cached data instead of ever being told apart.
-  if (is.null(LP_DATA_CACHE$df) || !identical(LP_DATA_CACHE$path, path) || !identical(LP_DATA_CACHE$mtime, mtime)) {
-    LP_DATA_CACHE$df <- load_lp_data(path)
-    LP_DATA_CACHE$mtime <- mtime
-    LP_DATA_CACHE$path <- path
+  if (is.null(MFP_DATA_CACHE$df) || !identical(MFP_DATA_CACHE$path, path) || !identical(MFP_DATA_CACHE$mtime, mtime)) {
+    MFP_DATA_CACHE$df <- load_mfp_data(path)
+    MFP_DATA_CACHE$mtime <- mtime
+    MFP_DATA_CACHE$path <- path
   }
-  LP_DATA_CACHE$df
+  MFP_DATA_CACHE$df
 }
 
-# tryCatch wrapper around cached_load_lp_data() -- turns a missing/corrupt
-# lp_data.RData into a NULL sentinel instead of a thrown error, so neither
+# tryCatch wrapper around cached_load_mfp_data() -- turns a missing/corrupt
+# mfp_data.RData into a NULL sentinel instead of a thrown error, so neither
 # consumer below (ui()'s per-request load, or RAW_DATA_READER's periodic
-# poll) crashes outright. Both call this instead of cached_load_lp_data()
-# directly now. Self-healing: cached_load_lp_data() only updates
-# LP_DATA_CACHE$mtime on success, so a failed load here doesn't poison the
+# poll) crashes outright. Both call this instead of cached_load_mfp_data()
+# directly now. Self-healing: cached_load_mfp_data() only updates
+# MFP_DATA_CACHE$mtime on success, so a failed load here doesn't poison the
 # cache -- the very next call (next poll, or the next page request) just
-# retries load_lp_data() fresh, and picks it up the moment the file is
+# retries load_mfp_data() fresh, and picks it up the moment the file is
 # fixed/reappears, no manual recovery step needed. See "Application
 # unavailable" (unavailable_page(), below ui()) and the raw_data()-is-NULL
 # validate() guards in each tab's scoped_raw().
-safe_load_lp_data <- function(path = LP_DATA_FILE) {
+safe_load_mfp_data <- function(path = MFP_DATA_FILE) {
   tryCatch(
-    cached_load_lp_data(path),
+    cached_load_mfp_data(path),
     error = function(e) {
-      warning("safe_load_lp_data(): ", conditionMessage(e), call. = FALSE)
+      warning("safe_load_mfp_data(): ", conditionMessage(e), call. = FALSE)
       NULL
     }
   )
 }
 
-# Check lp_data.RData for modifications every 6000 seconds (10 minutes) by default
+# Check mfp_data.RData for modifications every 6000 seconds (10 minutes) by default
 # but allow tests to override this to avoid waiting 10 real minutes for a test to exercise the reactiveFileReader.
 # Session = NULL means this reader isn't tied to (or
 # torn down with) any one visitor's session.
 RAW_DATA_POLL_MS <- as.numeric(Sys.getenv("RAW_DATA_POLL_MS", 10 * 60 * 1000))
-# safe_load_lp_data (not cached_load_lp_data directly) -- see LP_DATA_CACHE
-# above for the shared in-memory load, and safe_load_lp_data() for why this
+# safe_load_mfp_data (not cached_load_mfp_data directly) -- see MFP_DATA_CACHE
+# above for the shared in-memory load, and safe_load_mfp_data() for why this
 # needs to never throw: if the file disappears/corrupts mid-session, every
 # tab's scoped_raw() guards against raw_data() being NULL (see "No matching
 # data" state) instead of this reactive's next poll crashing the whole app.
-RAW_DATA_READER <- reactiveFileReader(RAW_DATA_POLL_MS, session = NULL, LP_DATA_FILE, safe_load_lp_data)
+RAW_DATA_READER <- reactiveFileReader(RAW_DATA_POLL_MS, session = NULL, MFP_DATA_FILE, safe_load_mfp_data)
 
 ordered_unique <- function(values, preferred_order) {
   known <- preferred_order[preferred_order %in% values]
@@ -563,9 +443,9 @@ ordered_unique <- function(values, preferred_order) {
   c(known, extra)
 }
 
-# Every distinct value of a series dimension (Industry or Geography)
-# present in the data, in a stable display order (preferred entries first,
-# the rest following the data's own grouping).
+# Every distinct value of a series dimension (Industry or Variable) present
+# in the data, in a stable display order (preferred entries first, the rest
+# following the data's own grouping).
 series_choices <- function(df, dim_col, preferred_order = character(0)) {
   ordered_unique(df[[dim_col]], preferred_order)
 }
@@ -599,24 +479,21 @@ series_style_map <- function(series) {
   )
 }
 
-# Comparison series is a specific (Industry, Geography) pair. 
-# Pair_label is the human-readable chart legend/checklist text; pair_key is a stable
-# machine identifier.
-# Kept separate so renaming the display format never
-# breaks identity comparisons.
-pair_label <- function(industry, geography) paste(industry, geography, sep = " — ")
-pair_key <- function(industry, geography) paste(industry, geography, sep = "|||")
-
-# The single active pair a fresh session starts with. 
-# Used identically by ui() and server() so the two can never drift apart.
-default_pair_row <- function() {
-  data.frame(
-    Industry = DEFAULT_INDUSTRY, Geography = DEFAULT_GEOGRAPHY,
-    SeriesLabel = pair_label(DEFAULT_INDUSTRY, DEFAULT_GEOGRAPHY),
-    PairKey = pair_key(DEFAULT_INDUSTRY, DEFAULT_GEOGRAPHY),
-    stringsAsFactors = FALSE
-  )
+# A comparison series is a specific Industry (table 36-10-0208-01 has no
+# Geography dimension worth keeping -- see data_pipeline.R -- so unlike the
+# old labour productivity dashboard, a series here is just one industry, not
+# an Industry+Geography pair). SeriesLabel/PairKey still exist as their own
+# columns rather than reading Industry directly everywhere downstream --
+# every chart/chip/CSV-export helper below is written generically against
+# "however a series is labeled/keyed", which would need no changes at all if
+# a future table swap ever reintroduced a second series dimension.
+active_pairs_columns <- function(industry) {
+  data.frame(Industry = industry, SeriesLabel = industry, PairKey = industry, stringsAsFactors = FALSE)
 }
+
+# The single active series a fresh session starts with. Used identically by
+# ui() and server() so the two can never drift apart.
+default_pair_row <- function() active_pairs_columns(DEFAULT_INDUSTRY)
 
 # Axis wording for the currently active view -- growth mode ignores
 # rebasing entirely (rebasing a series by a constant doesn't change its
@@ -641,10 +518,17 @@ display_axis_title <- function(view_mode, rebase_toggle, base_year, variable, uo
 # UOM entirely (a growth rate or an index is never denominated in the
 # underlying variable's dollars/jobs/hours), so those are checked first.
 # Classification below is keyword-matched against the actual UOM strings
-# data_pipeline.R's StatCan pull produces (Percent / Jobs / Hours / dollar
-# amounts, some already expressed "in thousands", some as *rates* -- "per
-# hour", "per unit of real GDP"). An unrecognized future UOM falls through to
-# a plain thousands-separated number rather than erroring.
+# data_pipeline.R's StatCan pull produces for table 36-10-0208-01 ("Index,
+# 2017=100" / "Hours" / "Dollars" -- the dollar-denominated variables are
+# expressed in millions per StatCan's own convention, same as the old
+# labour productivity table's dollar variables before it). The "dollar" +
+# "per" rate branch below doesn't match anything this table actually
+# produces today (nothing here is a per-hour/per-unit rate the way unit
+# labour cost was), but is left in place rather than removed -- it's
+# generic, harmless dead code today, and would activate again unprompted if
+# a future table or StatCan revision added a per-unit dollar variable. An
+# unrecognized future UOM falls through to a plain thousands-separated
+# number rather than erroring.
 metric_format_spec <- function(uom, view_mode, rebase_toggle) {
   if (identical(view_mode, "growth")) {
     return(list(tickformat = ".1f", prefix = "", suffix = "%"))
@@ -680,18 +564,19 @@ display_chart_title <- function(variable, year_range) {
 
 # Shared row/column shaping for both the Data Table and the CSV export, so
 # the download is always a WYSIWYG match of what's on screen. Exports the
-# underlying dimensions (Geography, Industry, Variable, UOM) rather than
-# the internal SeriesLabel convenience column.
+# underlying dimensions (Industry, Variable, UOM) rather than the internal
+# SeriesLabel convenience column. No Geography column -- see
+# active_pairs_columns()'s own comment for why this table has none to export.
 build_export_df <- function(df, rebase_toggle, base_year) {
   df <- df %>% arrange(SeriesLabel, Year)
-  cols <- c("Year", "Geography", "Industry", "Variable", "Value", "UOM", "GrowthPct")
+  cols <- c("Year", "Industry", "Variable", "Value", "UOM", "GrowthPct")
   if (isTRUE(rebase_toggle)) cols <- c(cols, "RebasedValue")
   df[, cols]
 }
 
 export_column_labels <- function(cols, base_year, variable, uom) {
   labels <- c(
-    Year = "Year", Geography = "Geography", Industry = "Industry", Variable = "Variable",
+    Year = "Year", Industry = "Industry", Variable = "Variable",
     Value = paste0(variable, " (", uom, ")"),
     UOM = "Unit", GrowthPct = "Annual growth (%)"
   )
@@ -726,9 +611,9 @@ compute_cagr <- function(start_value, end_value, n_years) {
 
 # True if `ancestor` is `industry` itself or one of its ancestors in the
 # Industry hierarchy (see INDUSTRY_PARENT) -- used to flag when two active
-# series in the *same* geography would double-count each other for
-# additive measures (jobs, hours, compensation): "All industries" and
-# "Manufacturing" aren't independent series, one contains the other.
+# series would double-count each other for additive measures (labour
+# compensation, capital cost, etc.): "Business sector" and "Manufacturing"
+# aren't independent series, one contains the other.
 industry_is_ancestor <- function(ancestor, industry) {
   seen <- character(0)
   current <- industry
@@ -738,25 +623,12 @@ industry_is_ancestor <- function(ancestor, industry) {
     seen <- c(seen, current)
     # INDUSTRY_PARENT is a plain named character vector, not a list -- `[[`
     # errors ("subscript out of bounds") on a name it doesn't contain,
-    # instead of returning NULL. `[` returns NA instead, which every root
-    # category (e.g. "Business sector industries") hits once walked up to,
-    # since roots have no parent entry of their own.
+    # instead of returning NULL. `[` returns NA instead, which the root
+    # category ("Business sector") hits once walked up to, since it has no
+    # parent entry of its own -- nothing beyond it to bridge to, unlike the
+    # old labour productivity table's 3-root hierarchy.
     parent <- unname(INDUSTRY_PARENT[current])
-    if (is.na(parent)) {
-      # INDUSTRY_PARENT only encodes the picker's *indentation* hierarchy
-      # (2-digit -> its sector, 3-digit -> its 2-digit) -- it doesn't
-      # separately encode that "Business sector industries" and "Non-
-      # business sector industries" are themselves subtotals of "All
-      # industries" (the whole-economy total), since industry_choices_tree()
-      # treats all three as parallel roots, not literally nested. Bridge
-      # that one missing edge here so ancestry checks still catch "All
-      # industries" vs. any of its components.
-      if (current %in% c("Business sector industries", "Non-business sector industries")) {
-        parent <- "All industries"
-      } else {
-        return(FALSE)
-      }
-    }
+    if (is.na(parent)) return(FALSE)
     current <- parent
   }
 }
@@ -778,7 +650,7 @@ data_asof_ui <- function() {
     # -- nested one level further than that, as it is now, it no longer
     # matches, so this is set explicitly rather than depended on.
     class = "text-muted small", style = "margin: 0;",
-    "Data last refreshed: ", format(file.mtime(LP_DATA_FILE), "%Y-%m-%d")
+    "Data last refreshed: ", format(file.mtime(MFP_DATA_FILE), "%Y-%m-%d")
   )
 }
 
@@ -856,13 +728,13 @@ download_menu_ui <- function(ns, chart_id = ns("chart"), include_png = TRUE, ful
 }
 
 # The Trends tab: a focused single-series view (one Variable + one
-# Geography + one Industry -> one line), unlike the other 3 tabs which
-# still compare multiple (Industry, Geography) pairs at once. Kept as its
-# own dedicated module rather than another "kind" of tab_module_ui/
+# Industry -> one line), unlike the other 3 tabs which still compare
+# multiple industries at once. Kept as its own dedicated module rather than
+# another "kind" of tab_module_ui/
 # tab_module_server below, since its sidebar shape and reactive pipeline
 # are genuinely different (no active_pairs/Add-series/multi-color
 # machinery), not just a different final render step.
-trend_tab_ui <- function(id, init_df, variable_choices, geography_choices, industry_tree) {
+trend_tab_ui <- function(id, init_df, variable_choices, industry_tree) {
   ns <- NS(id)
 
   card(
@@ -877,28 +749,24 @@ trend_tab_ui <- function(id, init_df, variable_choices, geography_choices, indus
     layout_sidebar(
       sidebar = sidebar(
         id = ns("sidebar"),
-        # Variable/Geography/Industry all use the same treeSelectInput
-        # widget here (see www/tree_select.js) rather than Shiny's
-        # selectizeInput, so all three behave identically -- click/tab in
-        # blanks the box for a fresh search or scroll, picking an option (or
-        # not) is what shows/restores the display text. Variable and
-        # Geography have no hierarchy of their own, so their tree_data is
-        # just flat_tree_nodes() over the plain choice list -- same flat-
-        # list rendering Industry's own leaf rows already use.
+        # Variable/Industry both use the same treeSelectInput widget here
+        # (see www/tree_select.js) rather than Shiny's selectizeInput, so
+        # both behave identically -- click/tab in blanks the box for a
+        # fresh search or scroll, picking an option (or not) is what
+        # shows/restores the display text. Variable has no hierarchy of its
+        # own, so its tree_data is just flat_tree_nodes() over the plain
+        # choice list -- same flat-list rendering Industry's own leaf rows
+        # already use. No Geography picker -- table 36-10-0208-01 covers
+        # Canada only (see MFP_DATA_FILE's own comment up top).
         treeSelectInput(
           ns("variable"), "Variable",
           tree_data = flat_tree_nodes(variable_choices), selected = DEFAULT_VARIABLE,
           placeholder = "Search variables..."
         ),
         uiOutput(ns("variable_definition")),
-        treeSelectInput(
-          ns("geography"), "Geography",
-          tree_data = flat_tree_nodes(geography_choices), selected = DEFAULT_GEOGRAPHY,
-          placeholder = "Search geographies..."
-        ),
-        # Always the full Aggregate+2-digit+3-digit tree -- no separate
+        # Always the full Aggregate+2-digit tree -- no separate
         # industry_level toggle (none of the tabs have one). Collapsible
-        # tree dropdown -- closed to just the 3 root aggregates by default,
+        # tree dropdown -- closed to just the root aggregate by default,
         # arrow to expand a branch, click a label to pick it.
         treeSelectInput(
           ns("industry"), "Industry",
@@ -952,11 +820,11 @@ trend_tab_ui <- function(id, init_df, variable_choices, geography_choices, indus
 trend_tab_server <- function(id, raw_data, variable_uom_lookup) {
   moduleServer(id, function(input, output, session) {
 
-    # Keeps Variable/Geography/Industry/time-frame/base-year in sync with
-    # what's in the data, preserving the user's current picks where still
-    # valid. Unlike the multi-pair tabs, an invalid pick falls back to the
-    # DEFAULT_* constants rather than going blank -- Geography/Industry are
-    # always-active single selections here, not an "add to compare" picker
+    # Keeps Variable/Industry/time-frame/base-year in sync with what's in
+    # the data, preserving the user's current picks where still valid.
+    # Unlike the multi-pair tabs, an invalid pick falls back to the
+    # DEFAULT_* constants rather than going blank -- Industry is an
+    # always-active single selection here, not an "add to compare" picker
     # that's allowed to sit empty.
     #
     # ignoreInit = TRUE: this only needs to fire when the underlying file
@@ -966,7 +834,7 @@ trend_tab_server <- function(id, raw_data, variable_uom_lookup) {
     # and re-pushed an identical Industry tree over the websocket.
     observe({
       # req(), not a bare assignment -- raw_data() can be NULL if
-      # safe_load_lp_data() ever fails mid-session (see "No matching data"
+      # safe_load_mfp_data() ever fails mid-session (see "No matching data"
       # state); this just leaves the pickers as they were rather than
       # erroring on df$Variable/df$Industry below.
       df <- req(raw_data())
@@ -978,14 +846,6 @@ trend_tab_server <- function(id, raw_data, variable_uom_lookup) {
         input$variable
       }
       updateTreeSelectInput(session, "variable", tree_data = flat_tree_nodes(variable_choices), selected = new_variable)
-
-      geo_choices <- series_choices(df, "Geography", GEOGRAPHY_ORDER)
-      new_geo <- if (is.null(input$geography) || !(input$geography %in% geo_choices)) {
-        DEFAULT_GEOGRAPHY
-      } else {
-        input$geography
-      }
-      updateTreeSelectInput(session, "geography", tree_data = flat_tree_nodes(geo_choices), selected = new_geo)
 
       new_industry <- if (is.null(input$industry) || !(input$industry %in% unique(df$Industry))) {
         DEFAULT_INDUSTRY
@@ -1014,24 +874,24 @@ trend_tab_server <- function(id, raw_data, variable_uom_lookup) {
       updateSelectInput(session, "base_year", choices = year_choices, selected = new_base)
     }) |> bindEvent(raw_data(), once = FALSE, ignoreInit = TRUE)
 
-    # Single (Variable, Industry, Geography) match -- no SeriesLabel
-    # filtering/looping needed, but SeriesLabel is still added so
-    # build_export_df()/export_column_labels() work completely unchanged.
+    # Single (Variable, Industry) match -- no SeriesLabel filtering/looping
+    # needed, but SeriesLabel is still added so build_export_df()/
+    # export_column_labels() work completely unchanged.
     scoped_raw <- reactive({
-      # NULL only if safe_load_lp_data() failed mid-session (lp_data.RData
+      # NULL only if safe_load_mfp_data() failed mid-session (mfp_data.RData
       # deleted/corrupted after this session already connected) -- a
       # validate(), not req(), so every chart/table downstream shows this
       # message instead of just going blank. See "No matching data" state.
       validate(need(!is.null(raw_data()), "Data is temporarily unavailable -- please try again in a moment."))
-      req(input$variable, input$industry, input$geography)
+      req(input$variable, input$industry)
       raw_data() %>%
-        filter(Variable == input$variable, Industry == input$industry, Geography == input$geography) %>%
-        mutate(SeriesLabel = pair_label(input$industry, input$geography))
+        filter(Variable == input$variable, Industry == input$industry) %>%
+        mutate(SeriesLabel = input$industry)
     })
 
     # UOM is 1:1 per Variable (see variable_uom_lookup() in server(), shared
     # across all 4 tabs) -- a small lookup keyed by Variable, not a fresh
-    # filter() over the full (~588k-row) raw_data() every time this tab's
+    # filter() over the full raw_data() every time this tab's
     # Variable picker changes.
     variable_uom <- reactive({
       lookup <- variable_uom_lookup()
@@ -1039,7 +899,7 @@ trend_tab_server <- function(id, raw_data, variable_uom_lookup) {
     })
 
     history_with_growth <- reactive({
-      validate(need(nrow(scoped_raw()) > 0, "No data for this variable/industry/geography combination."))
+      validate(need(nrow(scoped_raw()) > 0, "No data for this variable/industry combination."))
       scoped_raw() %>%
         arrange(Year) %>%
         mutate(GrowthPct = (Value / lag(Value) - 1) * 100)
@@ -1099,7 +959,7 @@ trend_tab_server <- function(id, raw_data, variable_uom_lookup) {
     output$chart <- renderPlotly({
       df <- filtered_data() %>% filter(!is.na(DisplayValue)) %>% arrange(Year)
       # Distinct from history_with_growth()'s own validate() above -- rows
-      # can exist there (a real Variable/Industry/Geography match) but still
+      # can exist there (a real Variable/Industry match) but still
       # end up all-NA here, e.g. Growth view with only one year in range
       # (lag() has nothing to diff against). Previously a bare req(), which
       # blanked the chart with no explanation, indistinguishable from still
@@ -1112,13 +972,13 @@ trend_tab_server <- function(id, raw_data, variable_uom_lookup) {
       fmt <- metric_format_spec(variable_uom(), input$view_mode, input$rebase_toggle)
       line_color <- CATEGORICAL_PALETTE[1]
       # Chart title only states the variable/timeframe -- with a single
-      # line there's no legend to identify which industry/geography it is,
-      # so name the pair as a subtitle. Value leads (bold) with the series
-      # name following on its own line in the hover, same ordering as
-      # Compare's multi-series tooltip -- see the comment there for why the
-      # name still needs to be in the template even under "x unified"
-      # hovermode (its per-row colour swatch isn't a substitute for text).
-      subtitle <- pair_label(input$industry, input$geography)
+      # line there's no legend to identify which industry it is, so name it
+      # as a subtitle. Value leads (bold) with the series name following on
+      # its own line in the hover, same ordering as Compare's multi-series
+      # tooltip -- see the comment there for why the name still needs to be
+      # in the template even under "x unified" hovermode (its per-row
+      # colour swatch isn't a substitute for text).
+      subtitle <- input$industry
 
       plot_ly(
         data = df, x = ~Year, y = ~DisplayValue, name = subtitle,
@@ -1183,10 +1043,9 @@ trend_tab_server <- function(id, raw_data, variable_uom_lookup) {
           "index"
         }
         sprintf(
-          "productivity_%s_%s_%s_%s_%s-%s_%s.csv",
+          "productivity_%s_%s_%s_%s-%s_%s.csv",
           gsub("[^A-Za-z0-9]+", "-", input$variable),
           gsub("[^A-Za-z0-9]+", "-", input$industry),
-          gsub("[^A-Za-z0-9]+", "-", input$geography),
           mode_part, input$year_range[1], input$year_range[2], format(Sys.Date(), "%Y%m%d")
         )
       },
@@ -1198,14 +1057,14 @@ trend_tab_server <- function(id, raw_data, variable_uom_lookup) {
   })
 }
 
-# The Rankings tab: pick one Variable + one Geography (+ a maximum Industry
-# detail level), see every matching industry's compound annual growth rate
-# (CAGR) over the full time span of the data, as a scatter plot. Unlike
-# Trends/Compare there's no picker for a *specific* industry -- all
-# industries up to the chosen detail level are shown at once -- so this gets
-# its own dedicated module rather than another tab_module_ui/
-# tab_module_server "kind", same reasoning as the Trends tab.
-ranking_tab_ui <- function(id, init_df, variable_choices, geography_choices) {
+# The Rankings tab: pick one Variable (+ a maximum Industry detail level),
+# see every matching industry's compound annual growth rate (CAGR) over the
+# full time span of the data, as a scatter plot. Unlike Trends/Compare
+# there's no picker for a *specific* industry -- all industries up to the
+# chosen detail level are shown at once -- so this gets its own dedicated
+# module rather than another tab_module_ui/tab_module_server "kind", same
+# reasoning as the Trends tab.
+ranking_tab_ui <- function(id, init_df, variable_choices) {
   ns <- NS(id)
 
   card(
@@ -1218,22 +1077,18 @@ ranking_tab_ui <- function(id, init_df, variable_choices, geography_choices) {
     layout_sidebar(
       sidebar = sidebar(
         id = ns("sidebar"),
-        # Same treeSelectInput widget as the Trends tab's Variable/
-        # Geography/Industry pickers (see www/tree_select.js and the
-        # matching comment on the Trends tab's sidebar) -- click/tab in
-        # blanks the box for a fresh search or scroll, picking an option
-        # (or not) is what shows/restores the display text.
+        # Same treeSelectInput widget as the Trends tab's Variable picker
+        # (see www/tree_select.js and the matching comment on the Trends
+        # tab's sidebar) -- click/tab in blanks the box for a fresh search
+        # or scroll, picking an option (or not) is what shows/restores the
+        # display text. No Geography picker -- table 36-10-0208-01 covers
+        # Canada only (see MFP_DATA_FILE's own comment up top).
         treeSelectInput(
           ns("variable"), "Variable",
           tree_data = flat_tree_nodes(variable_choices), selected = DEFAULT_VARIABLE,
           placeholder = "Search variables..."
         ),
         uiOutput(ns("variable_definition")),
-        treeSelectInput(
-          ns("geography"), "Geography",
-          tree_data = flat_tree_nodes(geography_choices), selected = DEFAULT_GEOGRAPHY,
-          placeholder = "Search geographies..."
-        ),
         sliderInput(
           ns("year_range"), "Date range",
           min = min(init_df$Year), max = max(init_df$Year),
@@ -1244,8 +1099,7 @@ ranking_tab_ui <- function(id, init_df, variable_choices, geography_choices) {
           ns("industry_level"), "Industry classification level",
           choices = c(
             "Economy-wide and broad aggregates" = "Aggregate",
-            "Sector level" = "2-digit",
-            "Sub-sector level" = "3-digit"
+            "Sector level" = "2-digit"
           ),
           # Stacked rather than inline -- the longer labels above would
           # wrap awkwardly across a narrow sidebar as a horizontal row.
@@ -1282,11 +1136,11 @@ ranking_tab_ui <- function(id, init_df, variable_choices, geography_choices) {
 ranking_tab_server <- function(id, raw_data, variable_uom_lookup) {
   moduleServer(id, function(input, output, session) {
 
-    # Same DEFAULT_*-fallback sync pattern as the Trends tab -- Variable and
-    # Geography are always-active single selections here too, never blank.
-    # ignoreInit = TRUE -- see the matching comment on the Trends tab's own
-    # sync observe(): ui() already built this session's initial widgets from
-    # the same raw_data(), so this only needs to fire on a real data change.
+    # Same DEFAULT_*-fallback sync pattern as the Trends tab -- Variable is
+    # an always-active single selection here too, never blank. ignoreInit =
+    # TRUE -- see the matching comment on the Trends tab's own sync
+    # observe(): ui() already built this session's initial widgets from the
+    # same raw_data(), so this only needs to fire on a real data change.
     observe({
       # req(), not a bare assignment -- see the matching comment on the
       # Trends tab's own sync observe().
@@ -1299,14 +1153,6 @@ ranking_tab_server <- function(id, raw_data, variable_uom_lookup) {
         input$variable
       }
       updateTreeSelectInput(session, "variable", tree_data = flat_tree_nodes(variable_choices), selected = new_variable)
-
-      geo_choices <- series_choices(df, "Geography", GEOGRAPHY_ORDER)
-      new_geo <- if (is.null(input$geography) || !(input$geography %in% geo_choices)) {
-        DEFAULT_GEOGRAPHY
-      } else {
-        input$geography
-      }
-      updateTreeSelectInput(session, "geography", tree_data = flat_tree_nodes(geo_choices), selected = new_geo)
 
       year_min <- min(df$Year)
       year_max <- max(df$Year)
@@ -1322,18 +1168,15 @@ ranking_tab_server <- function(id, raw_data, variable_uom_lookup) {
     scoped_raw <- reactive({
       # See the matching comment on the Trends tab's own scoped_raw().
       validate(need(!is.null(raw_data()), "Data is temporarily unavailable -- please try again in a moment."))
-      req(input$variable, input$geography, input$industry_level)
+      req(input$variable, input$industry_level)
       raw_data() %>%
-        filter(
-          Variable == input$variable, Geography == input$geography,
-          IndustryLevel %in% industry_levels_upto(input$industry_level)
-        )
+        filter(Variable == input$variable, IndustryLevel %in% industry_levels_upto(input$industry_level))
     })
 
     # UOM is 1:1 per Variable (see variable_uom_lookup() in server(), shared
     # across all 4 tabs) -- a small lookup keyed by Variable, not a fresh
-    # filter() over the full (~588k-row) raw_data() every time this tab's
-    # Variable picker changes.
+    # filter() over the full raw_data() every time this tab's Variable
+    # picker changes.
     variable_uom <- reactive({
       lookup <- variable_uom_lookup()
       lookup$UOM[lookup$Variable == input$variable][1]
@@ -1342,7 +1185,7 @@ ranking_tab_server <- function(id, raw_data, variable_uom_lookup) {
     # CAGR from the start to the end of the selected time frame.
     ranking_data <- reactive({
       df <- scoped_raw()
-      validate(need(nrow(df) > 0, "No data for this variable/geography combination."))
+      validate(need(nrow(df) > 0, "No data for this variable."))
       rng <- req(input$year_range)
       start_year <- rng[1]
       end_year <- rng[2]
@@ -1395,8 +1238,8 @@ ranking_tab_server <- function(id, raw_data, variable_uom_lookup) {
     })
 
     # tryCatch mirrors ranking_dropped_industries() above -- ranking_data()
-    # can itself be mid-validate() (e.g. "No data for this variable/
-    # geography combination", a time frame spanning under 2 years), and
+    # can itself be mid-validate() (e.g. "No data for this variable",
+    # a time frame spanning under 2 years), and
     # that condition would otherwise propagate straight through here into
     # output$chart_container's own renderUI, replacing the plotlyOutput it
     # builds with a validation message of its own -- which would leave
@@ -1489,7 +1332,7 @@ ranking_tab_server <- function(id, raw_data, variable_uom_lookup) {
 
       p <- p %>% layout(
         title = paste0(
-          input$variable, " by industry — ", input$geography,
+          input$variable, " by industry",
           " (", input$year_range[1], "-", input$year_range[2], ")"
         ),
         xaxis = list(title = "Compound annual growth rate (%)", gridcolor = GRIDLINE, color = INK_MUTED),
@@ -1546,9 +1389,8 @@ ranking_tab_server <- function(id, raw_data, variable_uom_lookup) {
     output$download_csv <- downloadHandler(
       filename = function() {
         sprintf(
-          "productivity_ranking_%s_%s_%s_%s-%s_%s.csv",
+          "productivity_ranking_%s_%s_%s-%s_%s.csv",
           gsub("[^A-Za-z0-9]+", "-", input$variable),
-          gsub("[^A-Za-z0-9]+", "-", input$geography),
           input$industry_level,
           input$year_range[1], input$year_range[2], format(Sys.Date(), "%Y%m%d")
         )
@@ -1557,7 +1399,7 @@ ranking_tab_server <- function(id, raw_data, variable_uom_lookup) {
         out <- ranking_data() %>%
           arrange(desc(CAGR)) %>%
           transmute(
-            Industry, Geography = input$geography, Variable = input$variable,
+            Industry, Variable = input$variable,
             StartYear = input$year_range[1], StartValue, EndYear = input$year_range[2], EndValue,
             `CAGR (%)` = CAGR * 100
           )
@@ -1605,10 +1447,10 @@ tab_module_ui <- function(id, init_df, kind, variable_choices, industry_tree) {
       sidebar = sidebar(
         id = ns("sidebar"),
         # Same treeSelectInput widget as the Trends/Rankings tabs' Variable/
-        # Geography/Industry pickers (see www/tree_select.js and the
-        # matching comment on the Trends tab's sidebar) -- click/tab in
-        # blanks the box for a fresh search or scroll, picking an option
-        # (or not) is what shows/restores the display text.
+        # Industry pickers (see www/tree_select.js and the matching comment
+        # on the Trends tab's sidebar) -- click/tab in blanks the box for a
+        # fresh search or scroll, picking an option (or not) is what
+        # shows/restores the display text.
         treeSelectInput(
           ns("variable"), "Variable",
           tree_data = flat_tree_nodes(variable_choices), selected = DEFAULT_VARIABLE,
@@ -1616,27 +1458,22 @@ tab_module_ui <- function(id, init_df, kind, variable_choices, industry_tree) {
         ),
         uiOutput(ns("variable_definition")),
         tags$strong("Compare"),
-        # Collapsible tree dropdown -- closed to just the 3 root aggregates
-        # by default, arrow to expand a branch, click a label to pick it.
+        # Collapsible tree dropdown -- closed to just the root aggregate by
+        # default, arrow to expand a branch, click a label to pick it.
         # Natively supports an empty "nothing selected" state (reported as
         # ""), so unlike the old selectize picker this replaces, no leading
-        # blank "" choice trick is needed to make the box start empty.
+        # blank "" choice trick is needed to make the box start empty. No
+        # Geography picker alongside it -- table 36-10-0208-01 covers Canada
+        # only (see MFP_DATA_FILE's own comment up top), so a series here is
+        # just one industry (see active_pairs_columns()).
         treeSelectInput(
           ns("pair_industry"), "Industry",
           tree_data = industry_tree, selected = NULL,
           placeholder = "Search industries..."
         ),
-        # Same empty-string "nothing selected" contract as pair_industry
-        # above -- no leading blank "" choice needed the way the old
-        # selectizeInput this replaces required.
-        treeSelectInput(
-          ns("pair_geography"), "Geography",
-          tree_data = flat_tree_nodes(GEOGRAPHY_ORDER), selected = NULL,
-          placeholder = "Search geographies..."
-        ),
-        # Starts disabled (both pickers are blank on load) -- the server's
-        # observe() on input$pair_industry/input$pair_geography takes over
-        # from here the moment the session connects, see tab_module_server().
+        # Starts disabled (the picker is blank on load) -- the server's
+        # observe() on input$pair_industry takes over from here the moment
+        # the session connects, see tab_module_server().
         actionButton(ns("add_pair"), "Add series", icon = icon("plus"), disabled = NA),
         # "N out of MAX series selected" -- reactive on active_pairs(), so it
         # updates in lockstep with the chip list and the disabled state above
@@ -1748,13 +1585,13 @@ tab_module_ui <- function(id, init_df, kind, variable_choices, industry_tree) {
 tab_module_server <- function(id, raw_data, kind, variable_uom_lookup) {
   moduleServer(id, function(input, output, session) {
 
-    # Keeps the variable, geography, time frame, and base year selectors in
-    # sync with what's available in the data (added/removed whenever
-    # RAW_DATA_READER's shared file-watcher picks up a new pipeline run),
-    # preserving the user's current picks -- clamped to the new bounds --
-    # where possible. This only affects what's *offered* when adding a new
-    # pair -- pairs already in active_pairs() are unaffected, since they're
-    # already resolved to a concrete Industry/Geography.
+    # Keeps the variable, time frame, and base year selectors in sync with
+    # what's available in the data (added/removed whenever RAW_DATA_READER's
+    # shared file-watcher picks up a new pipeline run), preserving the
+    # user's current picks -- clamped to the new bounds -- where possible.
+    # This only affects what's *offered* when adding a new series --
+    # series already in active_pairs() are unaffected, since they're
+    # already resolved to a concrete Industry.
     #
     # ignoreInit = TRUE -- see the matching comment on the Trends tab's own
     # sync observe(): ui() already built this session's initial widgets
@@ -1774,15 +1611,6 @@ tab_module_server <- function(id, raw_data, kind, variable_uom_lookup) {
         current_variable
       }
       updateTreeSelectInput(session, "variable", tree_data = flat_tree_nodes(variable_choices), selected = new_variable)
-
-      geo_choices <- series_choices(df, "Geography", GEOGRAPHY_ORDER)
-      current_geo <- input$pair_geography
-      new_geo <- if (is.null(current_geo) || !nzchar(current_geo) || !(current_geo %in% geo_choices)) {
-        ""
-      } else {
-        current_geo
-      }
-      updateTreeSelectInput(session, "pair_geography", tree_data = flat_tree_nodes(geo_choices), selected = new_geo)
 
       current_industry <- input$pair_industry
       new_industry <- if (is.null(current_industry) || !nzchar(current_industry) ||
@@ -1818,10 +1646,11 @@ tab_module_server <- function(id, raw_data, kind, variable_uom_lookup) {
       updateSelectInput(session, "base_year", choices = year_choices, selected = new_base)
     }) |> bindEvent(raw_data(), once = FALSE, ignoreInit = TRUE)
 
-    # The set of (Industry, Geography) pairs currently being compared --
-    # replaces the old compare_mode-driven industries_multi/geos_multi/
-    # geo_single/industry_single inputs with one free-form list that can mix
-    # any industry with any geography.
+    # The set of Industries currently being compared -- replaces the old
+    # compare_mode-driven industries_multi/geos_multi/geo_single/
+    # industry_single inputs with one free-form list (see
+    # active_pairs_columns()'s own comment for why this is still called
+    # "pairs"/PairKey rather than renamed now that Geography is gone).
     active_pairs <- reactiveVal(default_pair_row())
 
     # The MAX_ACTIVE_SERIES cap is a Compare-tab-only thing (kind == "bar")
@@ -1832,16 +1661,15 @@ tab_module_server <- function(id, raw_data, kind, variable_uom_lookup) {
     # check below a no-op there instead of needing a separate branch per check.
     max_series <- if (kind == "bar") MAX_ACTIVE_SERIES else Inf
 
-    # "Add series" only makes sense once both pickers hold a real value AND
-    # (Compare tab only) the list is under the max_series cap -- both
-    # pickers report "" for "nothing selected" (treeSelectInput's shared
-    # contract, see the comment on its definition), which isTruthy() treats
-    # as falsy the same way req() elsewhere in this module already does, so
-    # this and the req() inside the add_pair observer below always agree on
-    # what counts as "ready".
+    # "Add series" only makes sense once the picker holds a real value AND
+    # (Compare tab only) the list is under the max_series cap -- the picker
+    # reports "" for "nothing selected" (treeSelectInput's shared contract,
+    # see the comment on its definition), which isTruthy() treats as falsy
+    # the same way req() elsewhere in this module already does, so this and
+    # the req() inside the add_pair observer below always agree on what
+    # counts as "ready".
     observe({
-      ready <- isTruthy(input$pair_industry) && isTruthy(input$pair_geography) &&
-        nrow(active_pairs()) < max_series
+      ready <- isTruthy(input$pair_industry) && nrow(active_pairs()) < max_series
       session$sendCustomMessage("toggleDisabled", list(id = session$ns("add_pair"), disabled = !ready))
     })
 
@@ -1860,7 +1688,7 @@ tab_module_server <- function(id, raw_data, kind, variable_uom_lookup) {
     })
 
     observeEvent(input$add_pair, {
-      req(input$pair_industry, input$pair_geography)
+      req(input$pair_industry)
       current <- active_pairs()
       # Belt-and-suspenders alongside the disabled state above -- guards the
       # rare case a click already in flight lands after the button's just
@@ -1868,16 +1696,16 @@ tab_module_server <- function(id, raw_data, kind, variable_uom_lookup) {
       # session tick), rather than trusting the UI toggle alone to never let
       # a 9th series through. A no-op on the Data tab, where max_series is Inf.
       req(nrow(current) < max_series)
-      key <- pair_key(input$pair_industry, input$pair_geography)
+      key <- input$pair_industry
       if (!(key %in% current$PairKey)) {
-        # Same geography + a hierarchy relationship (parent or child, either
-        # direction) means the two series aren't independent -- one already
-        # includes the other's activity, so comparing their *levels* isn't
-        # apples-to-apples for additive measures like jobs or compensation.
-        # Informational only (not blocked): sometimes that comparison is
-        # exactly the point (e.g. showing a subsector diverging from its
-        # sector), so this just makes the overlap visible rather than
-        # silently assuming it's a mistake.
+        # A hierarchy relationship (parent or child, either direction) means
+        # the two series aren't independent -- one already includes the
+        # other's activity, so comparing their *levels* isn't
+        # apples-to-apples for additive measures like labour compensation or
+        # capital cost. Informational only (not blocked): sometimes that
+        # comparison is exactly the point (e.g. showing a sub-sector
+        # diverging from its sector), so this just makes the overlap visible
+        # rather than silently assuming it's a mistake.
         # vapply, not mapply -- mapply's default SIMPLIFY=TRUE returns a
         # zero-length *list* (not a logical(0) vector) when current$Industry
         # is empty (e.g. right after Clear comparisons), and `&` can't
@@ -1887,39 +1715,32 @@ tab_module_server <- function(id, raw_data, kind, variable_uom_lookup) {
         # 0 included -- so this stays a no-op instead of crashing the app
         # the moment the very next series gets added to an empty list.
         related <- current[
-          current$Geography == input$pair_geography &
-            vapply(
-              current$Industry,
-              function(i) industry_is_ancestor(i, input$pair_industry) || industry_is_ancestor(input$pair_industry, i),
-              logical(1), USE.NAMES = FALSE
-            ),
+          vapply(
+            current$Industry,
+            function(i) industry_is_ancestor(i, input$pair_industry) || industry_is_ancestor(input$pair_industry, i),
+            logical(1), USE.NAMES = FALSE
+          ),
         ]
         if (nrow(related) > 0) {
           csls_notify(
             paste0(
               "Heads up: \"", input$pair_industry, "\" overlaps with \"",
-              paste(related$Industry, collapse = "\", \""), "\" in the industry hierarchy for ",
-              input$pair_geography, " -- one contains the other, so comparing levels isn't ",
-              "apples-to-apples for additive measures like jobs or compensation."
+              paste(related$Industry, collapse = "\", \""), "\" in the industry hierarchy -- ",
+              "one contains the other, so comparing levels isn't apples-to-apples for ",
+              "additive measures like labour compensation or capital cost."
             ),
             type = "message"
           )
         }
 
-        new_row <- data.frame(
-          Industry = input$pair_industry, Geography = input$pair_geography,
-          SeriesLabel = pair_label(input$pair_industry, input$pair_geography),
-          PairKey = key, stringsAsFactors = FALSE
-        )
-        current <- rbind(current, new_row)
+        current <- rbind(current, active_pairs_columns(input$pair_industry))
         active_pairs(current)
       }
 
-      # Clear the pickers back to their empty/placeholder state after every
+      # Clear the picker back to its empty/placeholder state after every
       # add -- so adding a series always ends with a clean search box ready
       # for the next pick, instead of leaving the just-added pick sitting
       # there looking like unconsumed input.
-      updateTreeSelectInput(session, "pair_geography", selected = "")
       updateTreeSelectInput(session, "pair_industry", selected = "")
     })
 
@@ -1963,10 +1784,10 @@ tab_module_server <- function(id, raw_data, kind, variable_uom_lookup) {
 
     # "Clear comparisons" empties the list in one click instead of clicking
     # every chip's × individually -- current[0, ] keeps the same columns
-    # (Industry/Geography/SeriesLabel/PairKey) with zero rows, which is
-    # exactly what the chip renderUI's nrow() == 0 empty-state branch and
-    # the downstream selected_series()/history_with_growth() req() gates
-    # already expect from "nothing selected".
+    # (Industry/SeriesLabel/PairKey) with zero rows, which is exactly what
+    # the chip renderUI's nrow() == 0 empty-state branch and the downstream
+    # selected_series()/history_with_growth() req() gates already expect
+    # from "nothing selected".
     observeEvent(input$clear_pairs, {
       active_pairs(active_pairs()[0, ])
     })
@@ -1981,21 +1802,22 @@ tab_module_server <- function(id, raw_data, kind, variable_uom_lookup) {
     })
 
     # Adds the SeriesLabel every downstream reactive/chart keys off of, so
-    # the rest of the reactive chain doesn't need to know pairs exist --
-    # it's already generic over "some series dimension".
+    # the rest of the reactive chain doesn't need to know how a series is
+    # identified -- it's already generic over "some series dimension" (see
+    # active_pairs_columns()'s own comment).
     scoped_raw <- reactive({
       # See the matching comment on the Trends tab's own scoped_raw().
       validate(need(!is.null(raw_data()), "Data is temporarily unavailable -- please try again in a moment."))
       raw_data() %>%
         filter(Variable == input$variable) %>%
-        mutate(SeriesLabel = pair_label(Industry, Geography))
+        mutate(SeriesLabel = Industry)
     })
 
     selected_series <- reactive(active_pairs()$SeriesLabel)
 
     # UOM is 1:1 per Variable (see variable_uom_lookup() in server(), shared
     # across all 4 tabs) -- a small lookup keyed by Variable, not a fresh
-    # filter() over the full (~588k-row) raw_data() every time this tab's
+    # filter() over the full raw_data() every time this tab's
     # Variable picker changes.
     variable_uom <- reactive({
       lookup <- variable_uom_lookup()
@@ -2007,7 +1829,7 @@ tab_module_server <- function(id, raw_data, kind, variable_uom_lookup) {
     # series' actual prior year -- including years outside the currently
     # zoomed window.
     history_with_growth <- reactive({
-      validate(need(nrow(scoped_raw()) > 0, "No data for this variable/geography/industry-detail combination."))
+      validate(need(nrow(scoped_raw()) > 0, "No data for this variable."))
       req(length(selected_series()) > 0)
       scoped_raw() %>%
         filter(SeriesLabel %in% selected_series()) %>%
@@ -2085,11 +1907,12 @@ tab_module_server <- function(id, raw_data, kind, variable_uom_lookup) {
         filter(Year >= input$year_range[1], Year <= input$year_range[2])
     })
 
-    # Colors are assigned in the order pairs were added to active_pairs(),
-    # not from a fixed universe -- with ~1,900 possible (Industry,
-    # Geography) combinations, a fixed domain would mean almost every series
-    # falls through to the muted overflow color. This does mean a series'
-    # color can shift by one slot if an earlier pair is removed.
+    # Colors are assigned in the order series were added to active_pairs(),
+    # not from a fixed universe -- with 21 possible industries (see
+    # data_pipeline.R) against an 8-colour palette (MAX_ACTIVE_SERIES), a
+    # fixed domain would still mean most industries fall through to the
+    # muted overflow color. This does mean a series' color can shift by one
+    # slot if an earlier one is removed.
     colors <- reactive(series_color_map(active_pairs()$SeriesLabel))
     # Dash pattern / marker shape, indexed the same way as colors() -- the
     # colour-blind-safe secondary channel (see series_style_map()).
@@ -2251,7 +2074,7 @@ tab_module_server <- function(id, raw_data, kind, variable_uom_lookup) {
     )
 
     # Data-only (kind == "table", see the matching `if` in tab_module_ui()):
-    # the entire underlying dataset -- every Variable/Geography/Industry/Year
+    # the entire underlying dataset -- every Variable/Industry/Year
     # combination, not just the currently selected series/variable/time
     # frame -- so this deliberately reads raw_data() directly rather than
     # any of the scoped_raw()/filtered_data() reactives the rest of this
@@ -2265,8 +2088,8 @@ tab_module_server <- function(id, raw_data, kind, variable_uom_lookup) {
         },
         content = function(file) {
           out <- req(raw_data()) %>%
-            arrange(Variable, Geography, Industry, Year) %>%
-            select(Year, Geography, Industry, Variable, Value, UOM)
+            arrange(Variable, Industry, Year) %>%
+            select(Year, Industry, Variable, Value, UOM)
           write.csv(out, file, row.names = FALSE)
         }
       )
@@ -2274,8 +2097,8 @@ tab_module_server <- function(id, raw_data, kind, variable_uom_lookup) {
   })
 }
 
-# "Application unavailable" -- ui()'s fallback when safe_load_lp_data()
-# can't produce a data frame at all (lp_data.RData missing/corrupt). A
+# "Application unavailable" -- ui()'s fallback when safe_load_mfp_data()
+# can't produce a data frame at all (mfp_data.RData missing/corrupt). A
 # standalone page_fillable(), same shape as trend_tab_ui()/tab_module_ui(),
 # built with no dependency on init_df/variable_choices/industry_tree so it
 # never itself touches the data that just failed to load. Reuses the real
@@ -2283,7 +2106,7 @@ tab_module_server <- function(id, raw_data, kind, variable_uom_lookup) {
 # a bare error page.
 unavailable_page <- function() {
   page_fillable(
-    title = "Canadian Productivity Dashboard",
+    title = "Canadian Multifactor Productivity Dashboard",
     tags$head(
       tags$link(
         rel = "stylesheet",
@@ -2307,7 +2130,7 @@ unavailable_page <- function() {
       tags$p(
         "The productivity dataset couldn't be loaded. If you're able to, try running ",
         tags$code("data_pipeline.R"), " from this project folder to regenerate ",
-        tags$code("lp_data.RData"), ", then reload this page. If this persists, contact the ",
+        tags$code("mfp_data.RData"), ", then reload this page. If this persists, contact the ",
         "site maintainer."
       )
     ),
@@ -2321,21 +2144,19 @@ ui <- function(request) {
   # a reactive value. Computed directly from the data at page-build time
   # (not via a server-side update*Input call) so the default selection is
   # already present in the first HTML the browser receives.
-  # safe_load_lp_data(), not cached_load_lp_data() directly -- see
-  # LP_DATA_CACHE -- so a repeat page view doesn't pay the ~1.6s parse cost
+  # safe_load_mfp_data(), not cached_load_mfp_data() directly -- see
+  # MFP_DATA_CACHE -- so a repeat page view doesn't pay the parse cost
   # again (only the first request after the file actually changes does),
   # and a missing/corrupt file short-circuits to unavailable_page() instead
   # of crashing UI generation with a raw R error.
-  init_df <- safe_load_lp_data()
+  init_df <- safe_load_mfp_data()
   if (is.null(init_df)) return(unavailable_page())
   # Computed once and threaded through to the 4 tab-UI builders below,
   # instead of each of them independently recomputing the same
   # series_choices()/industry_tree_nodes() result from the same init_df --
-  # this collapses what was 6 series_choices() calls + 3 industry_tree_nodes()
-  # calls (the latter each rebuilding + re-JSON-serializing a 139-node tree)
-  # per page load down to 2 and 1 respectively.
+  # this collapses what would otherwise be 4 series_choices() calls + 4
+  # industry_tree_nodes() calls per page load down to 1 and 1 respectively.
   variable_choices <- series_choices(init_df, "Variable", VARIABLE_ORDER)
-  geography_choices <- series_choices(init_df, "Geography", GEOGRAPHY_ORDER)
   industry_tree <- industry_tree_nodes(init_df)
 
   page_fillable(
@@ -2351,7 +2172,7 @@ ui <- function(request) {
     # tags$style() block right after this tag. Must be placed in the UI
     # itself; it is not a bs_theme()/options() setting.
     useBusyIndicators(),
-    title = "Canadian Productivity Dashboard", # browser tab title only -- no on-page heading
+    title = "Canadian Multifactor Productivity Dashboard", # browser tab title only -- no on-page heading
     # Roboto -- the exact font csls.ca loads (see CSLS-Shiny-Style-Spec.md
     # section 3) -- at the 4 weights the theme actually uses (300/400/600/
     # 800). FONT_FAMILY's own fallback stack (Arial, sans-serif) covers the
@@ -2591,7 +2412,7 @@ ui <- function(request) {
     )),
     tags$style(HTML(sprintf(
       "/* Collapsible search/scroll dropdown (see www/tree_select.js), used
-          for Variable/Geography/Industry on Trends and for Industry on
+          for Variable/Industry on Trends/Rankings and for Industry on
           Compare/Data -- toggle styled to csls.ca's own form-control spec
           (42px tall, 8px radius, 14px/weight-300 text, rgba(0,0,0,.24)
           hairline border, jets blue on hover/focus -- CSLS-Shiny-Style-Spec.md
@@ -2610,11 +2431,11 @@ ui <- function(request) {
           its own arrow (.tree-select-row.no-children below) -- for
           Industry's leaf rows that's visibility:hidden, keeping the blank
           space so the label still lines up with sibling branch rows'
-          visible arrows one level up; a genuinely flat list (Variable/
-          Geography -- every row childless, no sibling ever has a visible
-          arrow to align against) instead collapses that gutter away
-          entirely via .tree-select-flat, so it doesn't read as a stray
-          indent in front of every label. */
+          visible arrows one level up; a genuinely flat list (Variable --
+          every row childless, no sibling ever has a visible arrow to align
+          against) instead collapses that gutter away entirely via
+          .tree-select-flat, so it doesn't read as a stray indent in front
+          of every label. */
        .tree-select { position: relative; width: 100%%; }
        .tree-select-toggle {
          display: block; width: 100%%; height: 42px; min-height: 42px; margin: 0;
@@ -2743,8 +2564,8 @@ ui <- function(request) {
     (function() {
       navset <- tagQuery(
         navset_pill(
-          nav_panel("Trends", trend_tab_ui("trend", init_df, variable_choices, geography_choices, industry_tree)),
-          nav_panel("Rankings", ranking_tab_ui("ranking", init_df, variable_choices, geography_choices)),
+          nav_panel("Trends", trend_tab_ui("trend", init_df, variable_choices, industry_tree)),
+          nav_panel("Rankings", ranking_tab_ui("ranking", init_df, variable_choices)),
           nav_panel("Compare", tab_module_ui("bar", init_df, "bar", variable_choices, industry_tree)),
           nav_panel("Data", tab_module_ui("table", init_df, "table", variable_choices, industry_tree))
         )
@@ -2799,7 +2620,7 @@ server <- function(input, output, session) {
   raw_data <- RAW_DATA_READER # single shared reactiveFileReader, not duplicated per tab
 
   # UOM is 1:1 per Variable in this table (StatCan's own convention here,
-  # confirmed against the real data) -- one small shared lookup (11 rows),
+  # confirmed against the real data) -- one small shared lookup (26 rows),
   # recomputed only when raw_data() itself changes, instead of each of the
   # 4 tabs below independently re-filtering the full raw_data() on every
   # Variable pick just to read off one constant.

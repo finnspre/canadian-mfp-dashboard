@@ -4,10 +4,8 @@
 # processes can never drift onto two different ideas of "what does this
 # table's data look like". Deliberately generic -- validate_data_contract()
 # takes its expected shape as a plain `contract` argument, nothing
-# LP-specific is baked into the function itself -- so this file, not just
-# its pattern, is meant to be copied wholesale as the starting point for a
-# future MFP (multifactor productivity) dashboard forked from this one: only
-# the constants below (table ID, column list, enum values) would need to
+# MFP-specific is baked into the function itself -- so a future table swap
+# only needs the constants below (table ID, column list, enum values) to
 # change, not validate_data_contract() itself.
 # ---------------------------------------------------------------------------
 
@@ -15,9 +13,8 @@
 # ID is defined. data_pipeline.R's get_cansim() call and every "Source:
 # Statistics Canada Table ..." caption in app.R read this constant instead
 # of each retyping the literal. To point the whole app at a new
-# vintage/table number (e.g. StatCan retiring 36-10-0480-01 in favour of a
-# successor table), change it here -- as long as the new table produces the
-# same raw columns and the same IndustryLevel/UOM conventions as today's,
+# vintage/table number, change it here -- as long as the new table produces
+# the same raw columns and the same IndustryLevel/UOM conventions as today's,
 # nothing else needs to change.
 #
 # Not handled: pinning a specific historical *vintage* of the table (rather
@@ -25,7 +22,7 @@
 # get_cansim() doesn't offer a straightforward way to fetch a past vintage
 # of a whole table (unlike its per-vector lookups), so this is left as a
 # known limitation rather than worked around here.
-STATCAN_TABLE_ID <- "36-10-0480-01"
+STATCAN_TABLE_ID <- "36-10-0208-01"
 
 # Raw columns data_pipeline.R's cleaning step (rename()/mutate()/the
 # Hierarchy-depth logic) depends on existing, by their exact StatCan-assigned
@@ -39,60 +36,76 @@ STATCAN_TABLE_ID <- "36-10-0480-01"
 # can meaningfully promise (types are cansim's own raw-pull types to define,
 # not this pipeline's), but every one of these names still needs to exist
 # for the checks below to even be able to say so.
+#
+# GEO is checked for presence even though this table carries only one value
+# ("Canada" -- see data_pipeline.R's own comment on why Geography is dropped
+# entirely rather than kept as a constant column): its absence would still
+# mean StatCan has restructured the table in some other unexpected way.
 RAW_STATCAN_CONTRACT <- list(
   columns = c(
-    REF_DATE = "any", GEO = "any", "Labour productivity and related measures" = "any",
-    Industry = "any", "Hierarchy for Industry" = "any", VALUE = "any", UOM = "any"
+    REF_DATE = "any", GEO = "any", "Multifactor productivity and related variables" = "any",
+    "North American Industry Classification System (NAICS)" = "any",
+    "Hierarchy for North American Industry Classification System (NAICS)" = "any",
+    VALUE = "any", UOM = "any"
   )
 )
 
-# The shape data_pipeline.R promises to hand off in lp_data.RData, and the
+# The shape data_pipeline.R promises to hand off in mfp_data.RData, and the
 # only shape app.R is ever allowed to assume when it reads that file back in
-# (see load_lp_data()'s own contract note). A future table swap (a new
+# (see load_mfp_data()'s own contract note). A future table swap (a new
 # vintage, or a successor table number in STATCAN_TABLE_ID above) needs
 # nothing else to change here as long as it still produces exactly this:
-# seven columns of these types, Year/Geography/Variable/Industry/
-# IndustryLevel never NA, one row per (Year, Geography, Variable, Industry),
-# and IndustryLevel restricted to these 3 values.
+# six columns of these types, Year/Variable/Industry/IndustryLevel never NA,
+# one row per (Year, Variable, Industry), and IndustryLevel restricted to
+# these 2 values.
 #
-# Geography/Variable are deliberately NOT restricted to a fixed enum here --
-# GEOGRAPHY_ORDER/VARIABLE_ORDER in app.R already tolerate a new value
-# appearing (it's just appended after the preferred ones in every picker) or
-# an old one disappearing, so a StatCan addition/removal to either is meant
-# to flow through, not fail the whole app. Industry is similarly open-ended:
-# a name not yet in app.R's INDUSTRY_PARENT lookup already soft-fails --
-# shows up unindented in the picker, with a loud warning() -- by deliberate,
-# existing design (see load_lp_data()); this contract doesn't second-guess
-# that by hard-failing on an unrecognized Industry name.
-LP_DATA_CONTRACT <- list(
+# No Geography column -- table 36-10-0208-01 covers Canada only (see
+# data_pipeline.R), so there's nothing left for it to distinguish once
+# extracted from the raw pull; keeping a constant "Canada" column around
+# would just be a column no picker or export has any use for.
+#
+# Variable is deliberately NOT restricted to a fixed enum here --
+# VARIABLE_ORDER in app.R already tolerates a new value appearing (it's just
+# appended after the preferred ones in every picker) or an old one
+# disappearing, so a StatCan addition/removal is meant to flow through, not
+# fail the whole app. Industry is similarly open-ended: a name not yet in
+# app.R's INDUSTRY_PARENT lookup already soft-fails -- shows up unindented in
+# the picker, with a loud warning() -- by deliberate, existing design (see
+# load_mfp_data()); this contract doesn't second-guess that by hard-failing
+# on an unrecognized Industry name.
+MFP_DATA_CONTRACT <- list(
   columns = c(
-    Year = "integer", Geography = "character", Variable = "character",
+    Year = "integer", Variable = "character",
     Industry = "character", IndustryLevel = "character",
     Value = "numeric", UOM = "character"
   ),
-  key_columns = c("Year", "Geography", "Variable", "Industry", "IndustryLevel"),
-  unique_key = c("Year", "Geography", "Variable", "Industry"),
-  enum_columns = list(IndustryLevel = c("Aggregate", "2-digit", "3-digit")),
+  key_columns = c("Year", "Variable", "Industry", "IndustryLevel"),
+  unique_key = c("Year", "Variable", "Industry"),
+  # Table 36-10-0208-01 goes only one level deeper than its economy-wide
+  # total -- "Business sector" plus 4 special aggregations at depth 1, its
+  # major sub-sectors at depth 2 (see data_pipeline.R) -- so there's no
+  # "3-digit" tier to enumerate here the way a more granular table might have.
+  enum_columns = list(IndustryLevel = c("Aggregate", "2-digit")),
   # Recomputed at source() time, not a hardcoded literal -- "current year"
   # shouldn't need an annual edit here just to stay accurate.
   year_bounds = c(1900L, as.integer(format(Sys.Date(), "%Y")) + 1L)
 )
 
 # Generic contract check -- shared by data_pipeline.R (checks its own output
-# before ever writing lp_data.RData, so a pipeline bug can't silently
-# overwrite a good cached file with a bad one) and app.R's load_lp_data()
+# before ever writing mfp_data.RData, so a pipeline bug can't silently
+# overwrite a good cached file with a bad one) and app.R's load_mfp_data()
 # (checks the file again on every read, since the RData file itself -- not
 # just the pipeline run that produced it -- is a real process boundary that
-# can independently drift or corrupt). Nothing LP-specific: every check
+# can independently drift or corrupt). Nothing table-specific: every check
 # below reads its expectations from `contract`, so this same function is
-# meant to validate a future MFP `contract` object unchanged.
+# meant to validate a future successor table's `contract` object unchanged.
 #
 # Collects every problem found rather than stopping at the first, so a
 # schema-drift investigation sees the whole picture in one run instead of
 # fixing one mismatch only to hit the next on the next attempt. Always
 # throws (never warns) when `problems` is non-empty -- every caller relies
 # on that: data_pipeline.R lets it halt the script before save(), and
-# app.R's safe_load_lp_data() already tryCatch()es load_lp_data() into a
+# app.R's safe_load_mfp_data() already tryCatch()es load_mfp_data() into a
 # NULL sentinel for exactly this kind of thrown error (see its own comment).
 # There's no separate "validation failed" UI state to build because a
 # validation failure is deliberately indistinguishable, from the rest of the
