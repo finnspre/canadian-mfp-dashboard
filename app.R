@@ -136,6 +136,46 @@ VARIABLE_ORDER <- c(
   "Contribution of labour composition to labour productivity growth"
 )
 
+# The Growth Accounting tab's productivity decomposition: labour productivity
+# (LP) growth in this table's own accounting framework equals the sum of the
+# contribution of capital deepening (capital intensity), the contribution of
+# labour composition, and multifactor productivity (MFP) growth -- MFP growth
+# is the *residual* left over once those two contributions are removed from
+# LP growth, not a separately-measured quantity, which is exactly why it's
+# computed that way below (see growth_tab_server()) rather than read off the
+# table's own "Multifactor productivity" series directly: StatCan's own MFP
+# index and this residual agree almost exactly (a fraction of a percentage
+# point apart, confirmed against the real data), but computing it as a
+# residual guarantees the 3 contributions always add up to LP growth exactly
+# -- the whole point of a decomposition chart -- rather than leaving a small
+# unexplained gap for a reader to notice and wonder about.
+#
+# All 3 of these are chain-linked indices (UOM "Index, 2017=100"), the same
+# as "Labour productivity" itself -- so a log-difference between consecutive
+# years (not a simple percent change, which the rest of this app's "Annual
+# percentage change" views use) is what makes the 3 contributions genuinely
+# additive: LP_t/LP_(t-1) is (to within rounding) the product of the other
+# 3 indices' own year-over-year ratios, so summing their log-ratios exactly
+# reconstructs log(LP_t/LP_(t-1)) -- summing simple percent changes instead
+# does not, and was confirmed empirically to leave a residual up to ~0.15
+# percentage points even at the economy-wide "Business sector" level.
+GROWTH_ACCOUNTING_VARS <- c(
+  lp = "Labour productivity",
+  cap = "Contribution of capital intensity to labour productivity growth",
+  lab = "Contribution of labour composition to labour productivity growth"
+)
+
+# Colour-only identity for the 4 bars this tab's chart draws (see
+# growth_tab_ui()'s sidebar legend and growth_tab_server()'s chart, the only
+# 2 places these are used) -- first 4 slots of the same CATEGORICAL_PALETTE
+# every other chart in this app draws from, so this tab's colours are still
+# part of the one calibrated (CVD-safe) palette rather than a second,
+# independent set of hex values.
+GROWTH_ACCOUNTING_COLORS <- c(
+  lp = CATEGORICAL_PALETTE[1], cap = CATEGORICAL_PALETTE[2],
+  lab = CATEGORICAL_PALETTE[3], mfp = CATEGORICAL_PALETTE[4]
+)
+
 # The Industry detail toggle on the Rankings tab -- selects a *maximum*
 # level of detail, not an exact one, so "2-digit" still includes the
 # Aggregate rows too (see industry_levels_upto() below). Table 36-10-0208-01
@@ -155,6 +195,41 @@ INDUSTRY_LEVEL_ORDER <- c("Aggregate", "2-digit")
 RANKING_CHART_ROW_THRESHOLD <- 40
 RANKING_CHART_PX_PER_ROW <- 28
 RANKING_CHART_TICKFONT_SPLIT <- 10
+
+# Growth Accounting tab: year-cluster count above which the chart switches
+# from filling the card's width to a fixed, wider-than-the-card pixel width
+# inside its own horizontally-scrolling wrapper (see growth_tab_server()'s
+# output$chart_container) -- same idea as RANKING_CHART_ROW_THRESHOLD above,
+# just along the other axis. Table 36-10-0208-01 spans up to 62 years of
+# usable growth data per industry (1961-2023, minus the first year -- see
+# GROWTH_ACCOUNTING_VARS), so in practice every industry crosses this at its
+# default (full) date range. PX_PER_YEAR budgets enough width per year for
+# both bars (the labour productivity growth bar + the stacked "other
+# factors" bar) plus the tight gap between them and a share of the wider
+# gap to the next year -- see GROWTH_BAR_OFFSET/GROWTH_BAR_WIDTH below.
+GROWTH_CHART_YEAR_THRESHOLD <- 15
+GROWTH_CHART_PX_PER_YEAR <- 70
+
+# Growth Accounting chart: the 2 bars per year (labour productivity growth,
+# and the capital deepening/labour composition/MFP growth stack) are
+# positioned by literal x-value arithmetic -- Year - GROWTH_BAR_OFFSET and
+# Year + GROWTH_BAR_OFFSET respectively, each drawn at GROWTH_BAR_WIDTH wide
+# -- rather than via barmode="group"/offsetgroup. Confirmed empirically
+# (a real headless-Chrome render, not just reading the plotly.js docs):
+# offsetgroup only separates bars into different x-slots when barmode is
+# "group" -- under "stack" or "relative" (needed here so the 3-series
+# "other factors" bar actually stacks, see output$chart) every trace at a
+# given x combines into one bar regardless of offsetgroup, so the 4 series
+# all merged into a single bar instead of 2 side by side the first time
+# this was tried. Explicit, different x-values per bar sidesteps that
+# entirely: nothing here depends on offsetgroup at all any more.
+# Geometry (derived once, not tuned by eye): with pair-offset d and
+# per-bar width w, the gap *within* one year's pair is (2d - w) and the gap
+# *between* one year's pair and the next is (1 - 2d - w) (1 = the spacing
+# between whole years). Solving for a small intra-pair gap (~0.05) and a
+# clearly bigger inter-pair gap (~0.25) gives d = 0.2, w = 0.35 below.
+GROWTH_BAR_OFFSET <- 0.2
+GROWTH_BAR_WIDTH <- 0.35
 
 # Plain-language explanation shown below the main panel for the currently
 # selected variable -- placeholder text for every variable until real
@@ -2097,6 +2172,373 @@ tab_module_server <- function(id, raw_data, kind, variable_uom_lookup) {
   })
 }
 
+# The Growth Accounting tab: for one Industry at a time, a stacked/grouped
+# bar chart showing what labour productivity (LP) growth is made up of each
+# year -- see GROWTH_ACCOUNTING_VARS's own comment for the decomposition
+# itself. No Variable picker (unlike every other tab) -- this tab always
+# reads the same fixed set of 3 series, so there's nothing to choose there;
+# Industry and the time frame are the only 2 things a reader can change.
+growth_tab_ui <- function(id, init_df, industry_tree) {
+  ns <- NS(id)
+
+  card(
+    # card-sidebar -- see the matching comment on the Trends tab's card().
+    class = "card-sidebar",
+    layout_sidebar(
+      sidebar = sidebar(
+        id = ns("sidebar"),
+        treeSelectInput(
+          ns("industry"), "Industry",
+          tree_data = industry_tree, selected = DEFAULT_INDUSTRY,
+          placeholder = "Search industries..."
+        ),
+        sliderInput(
+          ns("year_range"), "Date range",
+          min = min(init_df$Year), max = max(init_df$Year),
+          value = c(min(init_df$Year), max(init_df$Year)),
+          step = 1, sep = ""
+        ),
+        # Each bar is identified purely by colour (no per-bar source
+        # labelling on the chart itself, per how this tab is meant to read)
+        # -- this is the one place that colour -> variable mapping is
+        # actually spelled out. Static markup, not a renderUI: every colour
+        # here is a fixed constant (GROWTH_ACCOUNTING_COLORS), nothing about
+        # this legend depends on the current Industry/time-frame selection.
+        # cap/lab read their label straight off GROWTH_ACCOUNTING_VARS --
+        # StatCan's own exact variable names for this table (36-10-0208-01),
+        # the same 2 strings that select the data (see scoped_raw()) --
+        # rather than a shorter, separately-typed paraphrase, so the legend
+        # can never drift from what's actually being filtered/plotted, and
+        # matches what a reader would see naming that same Variable on the
+        # Trends/Rankings/Compare/Data tabs' own pickers. lp/mfp don't: LP
+        # growth is a growth *rate* of the "Labour productivity" variable,
+        # not that variable itself, and MFP growth here is a computed
+        # residual (see GROWTH_ACCOUNTING_VARS's own comment), not literally
+        # StatCan's "Multifactor productivity" series -- so neither has a
+        # single StatCan variable name to defer to the same way.
+        tags$div(
+          class = "growth-legend",
+          tags$strong("What each colour shows"),
+          tags$ul(
+            class = "growth-legend-list",
+            tags$li(
+              tags$span(class = "growth-legend-swatch", style = paste0("background-color:", GROWTH_ACCOUNTING_COLORS[["lp"]], ";")),
+              "Labour productivity growth"
+            ),
+            tags$li(
+              tags$span(class = "growth-legend-swatch", style = paste0("background-color:", GROWTH_ACCOUNTING_COLORS[["cap"]], ";")),
+              GROWTH_ACCOUNTING_VARS[["cap"]]
+            ),
+            tags$li(
+              tags$span(class = "growth-legend-swatch", style = paste0("background-color:", GROWTH_ACCOUNTING_COLORS[["lab"]], ";")),
+              GROWTH_ACCOUNTING_VARS[["lab"]]
+            ),
+            tags$li(
+              tags$span(class = "growth-legend-swatch", style = paste0("background-color:", GROWTH_ACCOUNTING_COLORS[["mfp"]], ";")),
+              "Multifactor productivity growth (residual)"
+            )
+          ),
+          tags$p(
+            class = "text-muted small",
+            "Each year shows 2 bars side by side: labour productivity growth on its own, then directly beside it the contribution of capital intensity (capital deepening), the contribution of labour composition, and multifactor productivity growth (the residual) stacked together -- so the second bar's height shows how those 3 factors add up to the first. Multifactor productivity's segment can extend below zero."
+          )
+        ),
+        download_menu_ui(ns)
+      ),
+      # The actual plotlyOutput lives in output$chart_container (renderUI)
+      # server-side instead of statically here -- once there are more years
+      # than comfortably fit on one screen (see GROWTH_CHART_YEAR_THRESHOLD),
+      # it needs a real, wider-than-the-card pixel width inside its own
+      # horizontally-scrolling wrapper instead of the usual 100%-fill, so
+      # every year's pair of bars keeps a legible width instead of being
+      # squeezed thinner and thinner as the date range widens. Below that
+      # threshold it renders the exact same plotlyOutput(height="100%") this
+      # replaces.
+      uiOutput(ns("chart_container"), fill = TRUE),
+      # See source_and_asof_ui()'s own comment for why this is one wrapper
+      # div rather than two separate top-level children here.
+      source_and_asof_ui(ns)
+    )
+  )
+}
+
+growth_tab_server <- function(id, raw_data) {
+  moduleServer(id, function(input, output, session) {
+
+    # Keeps Industry/time-frame in sync with what's in the data, preserving
+    # the user's current picks where still valid -- see the matching comment
+    # on the Trends tab's own sync observe() for why ignoreInit = TRUE and
+    # why req() (not a bare assignment) guards raw_data().
+    observe({
+      df <- req(raw_data())
+
+      new_industry <- if (is.null(input$industry) || !(input$industry %in% unique(df$Industry))) {
+        DEFAULT_INDUSTRY
+      } else {
+        input$industry
+      }
+      updateTreeSelectInput(session, "industry", tree_data = industry_tree_nodes(df), selected = new_industry)
+
+      year_min <- min(df$Year)
+      year_max <- max(df$Year)
+      current_range <- input$year_range
+      range_value <- if (is.null(current_range)) {
+        c(year_min, year_max)
+      } else {
+        c(max(current_range[1], year_min), min(current_range[2], year_max))
+      }
+      updateSliderInput(session, "year_range", min = year_min, max = year_max, value = range_value)
+    }) |> bindEvent(raw_data(), once = FALSE, ignoreInit = TRUE)
+
+    # The 3 series this tab's decomposition needs, for the selected
+    # Industry only -- see the matching comment on the Trends tab's own
+    # scoped_raw() for why this is validate(), not req(), against raw_data()
+    # itself.
+    scoped_raw <- reactive({
+      validate(need(!is.null(raw_data()), "Data is temporarily unavailable -- please try again in a moment."))
+      req(input$industry)
+      raw_data() %>% filter(Variable %in% GROWTH_ACCOUNTING_VARS, Industry == input$industry)
+    })
+
+    # One row per Year, the 3 raw indices aligned side by side -- match()
+    # (not a join) both because it's a 3-way alignment (nothing in dplyr
+    # does that in one step without tidyr, which this app doesn't otherwise
+    # depend on) and because it makes a Year missing from one of the 3
+    # series explicit as NA rather than silently dropped, the same way a
+    # join would.
+    aligned_indices <- reactive({
+      df <- scoped_raw()
+      validate(need(nrow(df) > 0, "No data for this industry."))
+      years <- sort(unique(df$Year))
+      value_for <- function(variable) {
+        series <- df[df$Variable == variable, ]
+        series$Value[match(years, series$Year)]
+      }
+      data.frame(
+        Year = years,
+        LP = value_for(GROWTH_ACCOUNTING_VARS[["lp"]]),
+        Cap = value_for(GROWTH_ACCOUNTING_VARS[["cap"]]),
+        Lab = value_for(GROWTH_ACCOUNTING_VARS[["lab"]])
+      )
+    })
+
+    # The decomposition itself -- see GROWTH_ACCOUNTING_VARS's own comment
+    # for why each series' own year-over-year log-difference is what's
+    # additive here, and why MFP growth is computed as the residual rather
+    # than read off its own index. The first year in the data has no prior
+    # year to diff against (log_growth()'s own leading NA) -- filtered out
+    # below (filtered_data()), the same way a first-year GrowthPct NA is
+    # dropped on the Trends tab.
+    decomposed_data <- reactive({
+      log_growth <- function(x) c(NA_real_, 100 * diff(log(x)))
+      df <- aligned_indices() %>% arrange(Year)
+      df$LPGrowth <- log_growth(df$LP)
+      df$CapitalDeepening <- log_growth(df$Cap)
+      df$LabourComposition <- log_growth(df$Lab)
+      df$MFPGrowth <- df$LPGrowth - df$CapitalDeepening - df$LabourComposition
+      df
+    })
+
+    filtered_data <- reactive({
+      req(input$year_range)
+      decomposed_data() %>%
+        filter(Year >= input$year_range[1], Year <= input$year_range[2], !is.na(LPGrowth))
+    })
+
+    # Shared by output$chart_container (which needs just the year count, to
+    # decide how wide the chart should be) and output$chart (which needs the
+    # actual data) -- see the matching comment on the Rankings tab's own
+    # ranking_chart_row_count() for why this is wrapped in tryCatch: a
+    # validate() condition from filtered_data() (e.g. "No data for this
+    # industry") would otherwise propagate into this renderUI too, replacing
+    # the plotlyOutput it builds and leaving output$chart with nothing left
+    # to render its own, more specific message into.
+    growth_chart_year_count <- reactive({
+      tryCatch(nrow(filtered_data()), error = function(e) 0L)
+    })
+
+    output$chart_container <- renderUI({
+      n <- growth_chart_year_count()
+      if (n > GROWTH_CHART_YEAR_THRESHOLD) {
+        px <- n * GROWTH_CHART_PX_PER_YEAR
+        # Outer div is the actual scroll viewport -- height:100% so it still
+        # fills the same vertical space plotlyOutput(height="100%") always
+        # has here (nothing about this chart needs *taller*, only *wider*,
+        # unlike the Rankings tab's own analogous case); overflow-x: auto is
+        # scoped to just this div, not the whole card (unlike table-tab-card/
+        # ranking-tab-card's card-level overflow-y), so the sidebar beside it
+        # is completely unaffected. Inner div pins the actual pixel width
+        # (plus min-width, so a flex ancestor can't shrink it back down) that
+        # the outer div then has something wider than itself to scroll to.
+        # id'd (not just style-matched) so www/ui_helpers.js's own
+        # "shown.bs.tab" scroll-hint listener can find this exact div
+        # directly by id, without depending on a CSS-attribute selector or
+        # this tab's nav-pill label text. overflow-anchor: none -- without
+        # it, confirmed empirically (repeated tab visits, watching
+        # scrollLeft) that the browser's own scroll-anchoring feature
+        # nudges this div's scroll position by a few px on its own each
+        # time Plotly re-measures/resizes the now-visible chart, compounding
+        # a little further on every revisit -- exactly the kind of "layout
+        # shifted, preserve what was on screen" adjustment scroll-anchoring
+        # exists for, but not wanted here: this div's own content never
+        # actually changes in a way a reader is looking at when it happens,
+        # and it fights the scroll-hint listener's own attempt to land back
+        # on exactly 0 every time.
+        tags$div(
+          id = session$ns("chart_scroll"),
+          style = "overflow-x: auto; overflow-y: hidden; overflow-anchor: none; width: 100%; height: 100%;",
+          tags$div(
+            style = paste0("width:", px, "px; min-width:", px, "px; height: 100%;"),
+            plotlyOutput(session$ns("chart"), height = "100%", width = "100%", fill = FALSE)
+          )
+        )
+      } else {
+        # Today's exact behaviour, byte-for-byte, whenever there aren't
+        # enough years for that to be worth doing.
+        plotlyOutput(session$ns("chart"), height = "100%", fill = TRUE)
+      }
+    })
+
+    output$chart <- renderPlotly({
+      df <- filtered_data()
+      validate(need(
+        nrow(df) > 0,
+        "No values to plot for this view -- try widening the date range."
+      ))
+      col <- GROWTH_ACCOUNTING_COLORS
+
+      # 2 bars per year, positioned by literal x-value arithmetic (Year -/+
+      # GROWTH_BAR_OFFSET) rather than offsetgroup -- see that constant's own
+      # comment for why (offsetgroup doesn't separate bars at all once
+      # barmode is "stack"/"relative", only under "group", confirmed against
+      # a real render). barmode "relative" (a layout-level, not per-trace,
+      # setting) is what makes the 3 "other factors" traces -- sharing the
+      # same Year + GROWTH_BAR_OFFSET x-values -- stack into one bar:
+      # positive ones upward from zero, negative ones (MFP growth, in a
+      # downturn) downward from zero, rather than plain top-to-bottom
+      # cumulative ("stack" mode) which would draw a negative MFP segment
+      # overlapping the positive ones instead of visibly subtracting from
+      # them. The labour productivity growth trace's different x-values
+      # (Year - GROWTH_BAR_OFFSET) never coincide with those, so it never
+      # combines with anything -- it just renders as its own bar.
+      plot_ly(data = df) %>%
+        add_trace(
+          x = ~Year - GROWTH_BAR_OFFSET, y = ~LPGrowth, type = "bar",
+          width = GROWTH_BAR_WIDTH, showlegend = FALSE,
+          marker = list(color = col[["lp"]]),
+          hovertemplate = "<b>%{y:.1f}%</b><br>Labour productivity growth<extra></extra>"
+        ) %>%
+        add_trace(
+          x = ~Year + GROWTH_BAR_OFFSET, y = ~CapitalDeepening, type = "bar",
+          width = GROWTH_BAR_WIDTH, showlegend = FALSE,
+          marker = list(color = col[["cap"]]),
+          # GROWTH_ACCOUNTING_VARS[["cap"]] -- StatCan's own exact variable
+          # name, not a shorter paraphrase -- see the matching comment on
+          # growth_tab_ui()'s legend for why.
+          hovertemplate = paste0("<b>%{y:.1f} pp</b><br>", GROWTH_ACCOUNTING_VARS[["cap"]], "<extra></extra>")
+        ) %>%
+        add_trace(
+          x = ~Year + GROWTH_BAR_OFFSET, y = ~LabourComposition, type = "bar",
+          width = GROWTH_BAR_WIDTH, showlegend = FALSE,
+          marker = list(color = col[["lab"]]),
+          hovertemplate = paste0("<b>%{y:.1f} pp</b><br>", GROWTH_ACCOUNTING_VARS[["lab"]], "<extra></extra>")
+        ) %>%
+        add_trace(
+          x = ~Year + GROWTH_BAR_OFFSET, y = ~MFPGrowth, type = "bar",
+          width = GROWTH_BAR_WIDTH, showlegend = FALSE,
+          marker = list(color = col[["mfp"]]),
+          hovertemplate = "<b>%{y:.1f} pp</b><br>Multifactor productivity growth (residual)<extra></extra>"
+        ) %>%
+        layout(
+          title = paste0("Labour productivity growth decomposition (", input$year_range[1], "-", input$year_range[2], ")<br>",
+                          "<sup style='color:", INK_MUTED, "'>", input$industry, "</sup>"),
+          barmode = "relative",
+          xaxis = list(
+            title = "Year", tickformat = "d", gridcolor = GRIDLINE, color = INK_MUTED,
+            # tick0 pinned to this render's own minimum Year (not left to
+            # Plotly's own auto-placement) -- the actual bars sit at
+            # Year +/- GROWTH_BAR_OFFSET, not on a whole Year, so without an
+            # explicit tick0 there's no guarantee autoticking would still
+            # land exactly on whole years.
+            dtick = 1, tick0 = min(df$Year)
+          ),
+          yaxis = list(
+            title = "Percentage points", gridcolor = GRIDLINE, color = INK_MUTED,
+            ticksuffix = "%"
+          ),
+          paper_bgcolor = CHART_SURFACE, plot_bgcolor = CHART_SURFACE,
+          font = list(color = INK_PRIMARY, family = FONT_FAMILY),
+          showlegend = FALSE,
+          # "closest" (Plotly's own single-point default), not "x unified"
+          # like every other chart in this app -- unified hover groups by
+          # exact x-match, but the 2 bars in one year deliberately sit at 2
+          # different x-values now (see GROWTH_BAR_OFFSET), so "x unified"
+          # would only ever surface one bar's tooltip at a time anyway,
+          # inconsistently depending on which bar's exact x the cursor was
+          # nearest to -- "closest" is at least honest about that.
+          hovermode = "closest",
+          # A visible zero line -- this chart, unlike most others in this
+          # app, defaults to a view where bars routinely sit below zero
+          # (a recession year's MFP growth, or LP growth itself), so "above/
+          # below flat" needs to be immediately legible rather than left to
+          # Plotly's own unstyled default zeroline.
+          shapes = list(list(
+            type = "line", xref = "paper", x0 = 0, x1 = 1,
+            yref = "y", y0 = 0, y1 = 0,
+            line = list(color = INK_MUTED, width = 1, dash = "dot")
+          ))
+        )
+      # No forced initial scroll position here -- left at the browser's own
+      # default (scrollLeft 0, i.e. the oldest years), deliberately, even
+      # once there are more years than fit on screen (see
+      # GROWTH_CHART_YEAR_THRESHOLD/output$chart_container): the y-axis
+      # (title + tick labels) is drawn once, at the *left* edge of this
+      # whole wide plot, same as any other Plotly chart -- it isn't a fixed
+      # element outside the scrollable area, so starting scrolled to the
+      # right (an earlier version of this chart auto-scrolled there, to
+      # open on the most recent years) scrolled the axis itself out of view
+      # right along with the oldest years. Left/default keeps the axis
+      # always in view on open; see www/ui_helpers.js's own "shown.bs.tab"
+      # listener for how a reader still discovers this chart scrolls
+      # (a brief scroll-and-back nudge the first time this tab is shown),
+      # now that the chart itself doesn't jump anywhere on its own.
+    })
+
+    # raw_data() is the dependency, not the value used -- see the matching
+    # comment on the Trends tab's own data_asof output.
+    output$data_asof <- renderUI({
+      raw_data()
+      data_asof_ui()
+    })
+
+    output$download_csv <- downloadHandler(
+      filename = function() {
+        sprintf(
+          "growth_accounting_%s_%s-%s_%s.csv",
+          gsub("[^A-Za-z0-9]+", "-", input$industry),
+          input$year_range[1], input$year_range[2], format(Sys.Date(), "%Y%m%d")
+        )
+      },
+      content = function(file) {
+        out <- filtered_data() %>%
+          transmute(Year, Industry = input$industry, LPGrowth, CapitalDeepening, LabourComposition, MFPGrowth)
+        # Column headers assigned after the fact (not as transmute()'s own
+        # backtick-quoted names) so the capital/labour ones can be built
+        # from GROWTH_ACCOUNTING_VARS -- StatCan's own exact variable names
+        # -- rather than a separately-typed paraphrase; see the matching
+        # comment on growth_tab_ui()'s legend for why.
+        names(out) <- c(
+          "Year", "Industry", "Labour productivity growth (%)",
+          paste0(GROWTH_ACCOUNTING_VARS[["cap"]], " (pp)"),
+          paste0(GROWTH_ACCOUNTING_VARS[["lab"]], " (pp)"),
+          "Multifactor productivity growth, residual (pp)"
+        )
+        write.csv(out, file, row.names = FALSE)
+      }
+    )
+  })
+}
+
 # "Application unavailable" -- ui()'s fallback when safe_load_mfp_data()
 # can't produce a data frame at all (mfp_data.RData missing/corrupt). A
 # standalone page_fillable(), same shape as trend_tab_ui()/tab_module_ui(),
@@ -2515,6 +2957,17 @@ ui <- function(request) {
       INK_MUTED,
       BRAND_JETS_BLUE
     ))),
+    # The Growth Accounting tab's sidebar legend -- swatches styled like the
+    # Compare/Data tabs' pair-chip-swatch (a small solid circle) rather than
+    # reintroducing a second swatch shape, but laid out as a plain list
+    # (each row is a fixed colour -> label mapping, nothing to remove/click)
+    # instead of the chip-list's inline flex-wrap layout.
+    tags$style(HTML(
+      ".growth-legend { margin: 0.75rem 0; }
+       .growth-legend-list { list-style: none; margin: 0.4rem 0; padding: 0; }
+       .growth-legend-list li { display: flex; align-items: center; gap: 0.5rem; padding: 2px 0; font-size: 13px; }
+       .growth-legend-swatch { width: 0.7rem; height: 0.7rem; border-radius: 50%; flex-shrink: 0; }"
+    )),
     tags$script(src = versioned_asset("tree_select.js")),
     tags$script(src = versioned_asset("ui_helpers.js")),
     # Logo, left of the nav-pills row (no on-page title text anymore -- the
@@ -2567,7 +3020,8 @@ ui <- function(request) {
           nav_panel("Trends", trend_tab_ui("trend", init_df, variable_choices, industry_tree)),
           nav_panel("Rankings", ranking_tab_ui("ranking", init_df, variable_choices)),
           nav_panel("Compare", tab_module_ui("bar", init_df, "bar", variable_choices, industry_tree)),
-          nav_panel("Data", tab_module_ui("table", init_df, "table", variable_choices, industry_tree))
+          nav_panel("Data", tab_module_ui("table", init_df, "table", variable_choices, industry_tree)),
+          nav_panel("Growth Accounting", growth_tab_ui("growth", init_df, industry_tree))
         )
       )
       nav_ul <- navset$find("ul.nav")$addClass("nav-justified")$selectedTags()
@@ -2630,6 +3084,7 @@ server <- function(input, output, session) {
   ranking_tab_server("ranking", raw_data, variable_uom_lookup)
   tab_module_server("bar", raw_data, "bar", variable_uom_lookup)
   tab_module_server("table", raw_data, "table", variable_uom_lookup)
+  growth_tab_server("growth", raw_data)
 }
 
 shinyApp(ui, server)
