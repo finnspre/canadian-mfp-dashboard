@@ -3236,10 +3236,10 @@ ui <- function(request) {
       navset <- tagQuery(
         navset_pill(
           nav_panel("Trends", trend_tab_ui("trend", init_df, variable_choices, industry_tree)),
-          nav_panel("Rankings", ranking_tab_ui("ranking", init_df, variable_choices)),
           nav_panel("Compare", tab_module_ui("bar", init_df, "bar", variable_choices, industry_tree)),
-          nav_panel("Data", tab_module_ui("table", init_df, "table", variable_choices, industry_tree)),
-          nav_panel("Growth Accounting", growth_tab_ui("growth", init_df, industry_tree))
+          nav_panel("Rankings", ranking_tab_ui("ranking", init_df, variable_choices)),
+          nav_panel("Growth Accounting", growth_tab_ui("growth", init_df, industry_tree)),
+          nav_panel("Data", tab_module_ui("table", init_df, "table", variable_choices, industry_tree))
         )
       )
       nav_ul <- navset$find("ul.nav")$addClass("nav-justified")$selectedTags()
