@@ -176,6 +176,34 @@ GROWTH_ACCOUNTING_COLORS <- c(
   lab = CATEGORICAL_PALETTE[3], mfp = CATEGORICAL_PALETTE[4]
 )
 
+# The Growth Accounting tab's Interval picker -- how many years each bar on
+# the x-axis covers, from 1 (today's original per-year behaviour) up to 10.
+# Values are plain integers (not e.g. "5y" strings) since growth_tab_server()
+# does arithmetic directly on the selected interval (period width, step size);
+# selectInput() still reports it back as a string like every HTML <select>
+# (see growth_interval()'s own as.integer() round-trip), same convention the
+# Trends/Compare tabs' own numeric Base year <select> already relies on.
+GROWTH_INTERVAL_CHOICES <- setNames(1:10, c("1 year (annual)", paste0(2:10, " years")))
+
+# "Slightly more greyscale" treatment for the one truncated period a
+# multi-year Interval can produce (see filtered_data()'s own comment on why
+# at most one ever exists, always the oldest) -- how far blend_toward_grey()
+# below blends a bar's colour toward grey; 0 = untouched, 1 = flat grey.
+GROWTH_TRUNCATED_DESATURATION <- 0.55
+
+# Blends a bar's normal series colour toward *that same colour's* own grey
+# (its average-channel equivalent) rather than one flat grey shared by every
+# series, so the 4 bars in the one truncated period (see
+# GROWTH_TRUNCATED_DESATURATION above) are still each identifiable by hue --
+# just visibly muted next to the vivid, full-length periods around them, per
+# what was asked for ("slightly more greyscale", not "solid grey").
+blend_toward_grey <- function(hex, amount = GROWTH_TRUNCATED_DESATURATION) {
+  channels <- grDevices::col2rgb(hex)[, 1]
+  grey <- mean(channels)
+  blended <- channels * (1 - amount) + grey * amount
+  grDevices::rgb(blended[1], blended[2], blended[3], maxColorValue = 255)
+}
+
 # The Industry detail toggle on the Rankings tab -- selects a *maximum*
 # level of detail, not an exact one, so "2-digit" still includes the
 # Aggregate rows too (see industry_levels_upto() below). Table 36-10-0208-01
@@ -196,38 +224,54 @@ RANKING_CHART_ROW_THRESHOLD <- 40
 RANKING_CHART_PX_PER_ROW <- 28
 RANKING_CHART_TICKFONT_SPLIT <- 10
 
-# Growth Accounting tab: year-cluster count above which the chart switches
-# from filling the card's width to a fixed, wider-than-the-card pixel width
+# Growth Accounting tab: period count above which the chart switches from
+# filling the card's width to a fixed, wider-than-the-card pixel width
 # inside its own horizontally-scrolling wrapper (see growth_tab_server()'s
 # output$chart_container) -- same idea as RANKING_CHART_ROW_THRESHOLD above,
-# just along the other axis. Table 36-10-0208-01 spans up to 62 years of
-# usable growth data per industry (1961-2023, minus the first year -- see
-# GROWTH_ACCOUNTING_VARS), so in practice every industry crosses this at its
-# default (full) date range. PX_PER_YEAR budgets enough width per year for
-# both bars (the labour productivity growth bar + the stacked "other
-# factors" bar) plus the tight gap between them and a share of the wider
-# gap to the next year -- see GROWTH_BAR_OFFSET/GROWTH_BAR_WIDTH below.
-GROWTH_CHART_YEAR_THRESHOLD <- 15
-GROWTH_CHART_PX_PER_YEAR <- 70
+# just along the other axis. A "period" here is whatever the Interval
+# picker currently divides the date range into (see GROWTH_INTERVAL_CHOICES/
+# filtered_data()) -- 1-year-wide periods at Interval "1 year (annual)", up
+# to 10-year-wide ones -- so how many periods a given date range produces
+# varies with that pick; table 36-10-0208-01 spans up to 62 years of usable
+# growth data per industry (1961-2023, minus the first year -- see
+# GROWTH_ACCOUNTING_VARS), so the annual case in practice crosses this
+# threshold at its default (full) date range even though a 10-year Interval
+# over the same range would not. PX_PER_PERIOD budgets enough width per
+# period for both bars (the labour productivity growth bar + the stacked
+# "other factors" bar) plus the tight gap between them and a share of the
+# wider gap to the next period -- see GROWTH_BAR_OFFSET/GROWTH_BAR_WIDTH
+# below.
+GROWTH_CHART_PERIOD_THRESHOLD <- 15
+GROWTH_CHART_PX_PER_PERIOD <- 70
 
-# Growth Accounting chart: the 2 bars per year (labour productivity growth,
-# and the capital deepening/labour composition/MFP growth stack) are
-# positioned by literal x-value arithmetic -- Year - GROWTH_BAR_OFFSET and
-# Year + GROWTH_BAR_OFFSET respectively, each drawn at GROWTH_BAR_WIDTH wide
-# -- rather than via barmode="group"/offsetgroup. Confirmed empirically
-# (a real headless-Chrome render, not just reading the plotly.js docs):
-# offsetgroup only separates bars into different x-slots when barmode is
-# "group" -- under "stack" or "relative" (needed here so the 3-series
-# "other factors" bar actually stacks, see output$chart) every trace at a
-# given x combines into one bar regardless of offsetgroup, so the 4 series
-# all merged into a single bar instead of 2 side by side the first time
-# this was tried. Explicit, different x-values per bar sidesteps that
-# entirely: nothing here depends on offsetgroup at all any more.
-# Geometry (derived once, not tuned by eye): with pair-offset d and
-# per-bar width w, the gap *within* one year's pair is (2d - w) and the gap
-# *between* one year's pair and the next is (1 - 2d - w) (1 = the spacing
-# between whole years). Solving for a small intra-pair gap (~0.05) and a
-# clearly bigger inter-pair gap (~0.25) gives d = 0.2, w = 0.35 below.
+# Growth Accounting chart: the 2 bars per period (labour productivity
+# growth, and the capital deepening/labour composition/MFP growth stack)
+# are positioned by literal x-value arithmetic -- PosIndex - GROWTH_BAR_OFFSET
+# and PosIndex + GROWTH_BAR_OFFSET respectively, each drawn at
+# GROWTH_BAR_WIDTH wide -- rather than via barmode="group"/offsetgroup.
+# PosIndex (see filtered_data()) is this chart's period's position along the
+# x-axis, 1/2/3/..., not the calendar year(s) it actually spans -- a period
+# can cover more than 1 year once the Interval picker is above "1 year", and
+# the 1 truncated period a date range doesn't divide evenly can cover fewer
+# years than the others (see filtered_data()'s own comment) -- so periods
+# are always drawn evenly spaced/sized on the axis regardless of how many
+# calendar years each actually represents, exactly like a bar chart of e.g.
+# "1990s"/"2000s"/"2010s" would be; PosIndex's paired tickvals/ticktext (see
+# output$chart) is what labels each position with its own real date range
+# instead of a plain 1/2/3 axis. Confirmed empirically (a real headless-
+# Chrome render, not just reading the plotly.js docs): offsetgroup only
+# separates bars into different x-slots when barmode is "group" -- under
+# "stack" or "relative" (needed here so the 3-series "other factors" bar
+# actually stacks, see output$chart) every trace at a given x combines into
+# one bar regardless of offsetgroup, so the 4 series all merged into a
+# single bar instead of 2 side by side the first time this was tried.
+# Explicit, different x-values per bar sidesteps that entirely: nothing
+# here depends on offsetgroup at all any more.
+# Geometry (derived once, not tuned by eye): with pair-offset d and per-bar
+# width w, the gap *within* one period's pair is (2d - w) and the gap
+# *between* one period's pair and the next is (1 - 2d - w) (1 = the spacing
+# between whole PosIndex steps). Solving for a small intra-pair gap (~0.05)
+# and a clearly bigger inter-pair gap (~0.25) gives d = 0.2, w = 0.35 below.
 GROWTH_BAR_OFFSET <- 0.2
 GROWTH_BAR_WIDTH <- 0.35
 
@@ -2198,6 +2242,21 @@ growth_tab_ui <- function(id, init_df, industry_tree) {
           value = c(min(init_df$Year), max(init_df$Year)),
           step = 1, sep = ""
         ),
+        # How many years each bar covers -- "1 year (annual)" (the default,
+        # and this tab's original behaviour) up to "10 years". Periods are
+        # counted backward from the date range's own *end* year (see
+        # filtered_data()), not forward from its start, so choosing e.g. "5
+        # years" over 2008-2020 gives 2015-2020/2010-2015/2008-2010, the
+        # last (oldest) one shorter than the rest rather than the most
+        # recent one -- a reader picking a date range is far more likely to
+        # care about a full, untruncated *recent* period than a full oldest
+        # one. selectize = FALSE, matching every other plain single-value
+        # dropdown in this app (e.g. the Trends tab's Base year) -- nothing
+        # here needs selectize's search box for a 10-item list.
+        selectInput(
+          ns("interval"), "Interval",
+          choices = GROWTH_INTERVAL_CHOICES, selected = 1, selectize = FALSE
+        ),
         # Each bar is identified purely by colour (no per-bar source
         # labelling on the chart itself, per how this tab is meant to read)
         # -- this is the one place that colour -> variable mapping is
@@ -2240,19 +2299,20 @@ growth_tab_ui <- function(id, init_df, industry_tree) {
           ),
           tags$p(
             class = "text-muted small",
-            "Each year shows 2 bars side by side: labour productivity growth on its own, then directly beside it the contribution of capital intensity (capital deepening), the contribution of labour composition, and multifactor productivity growth (the residual) stacked together -- so the second bar's height shows how those 3 factors add up to the first. Multifactor productivity's segment can extend below zero."
+            "Use this visualization to explore where labour productivity growth in Canada’s industries comes from. Each period shows 2 bars side by side: labour productivity growth on its own, then directly beside it the contribution of capital intensity (capital deepening), the contribution of labour composition, and multifactor productivity growth (the residual) stacked together -- so the second bar's height shows how those 3 factors add up to the first."
           )
         ),
         download_menu_ui(ns)
       ),
       # The actual plotlyOutput lives in output$chart_container (renderUI)
-      # server-side instead of statically here -- once there are more years
-      # than comfortably fit on one screen (see GROWTH_CHART_YEAR_THRESHOLD),
-      # it needs a real, wider-than-the-card pixel width inside its own
-      # horizontally-scrolling wrapper instead of the usual 100%-fill, so
-      # every year's pair of bars keeps a legible width instead of being
-      # squeezed thinner and thinner as the date range widens. Below that
-      # threshold it renders the exact same plotlyOutput(height="100%") this
+      # server-side instead of statically here -- once there are more
+      # periods than comfortably fit on one screen (see
+      # GROWTH_CHART_PERIOD_THRESHOLD), it needs a real, wider-than-the-card
+      # pixel width inside its own horizontally-scrolling wrapper instead of
+      # the usual 100%-fill, so every period's pair of bars keeps a legible
+      # width instead of being squeezed thinner and thinner as the date
+      # range widens (or the Interval picker shortens each period). Below
+      # that threshold it renders the exact same plotlyOutput(height="100%") this
       # replaces.
       uiOutput(ns("chart_container"), fill = TRUE),
       # See source_and_asof_ui()'s own comment for why this is one wrapper
@@ -2322,45 +2382,156 @@ growth_tab_server <- function(id, raw_data) {
       )
     })
 
-    # The decomposition itself -- see GROWTH_ACCOUNTING_VARS's own comment
-    # for why each series' own year-over-year log-difference is what's
-    # additive here, and why MFP growth is computed as the residual rather
-    # than read off its own index. The first year in the data has no prior
-    # year to diff against (log_growth()'s own leading NA) -- filtered out
-    # below (filtered_data()), the same way a first-year GrowthPct NA is
-    # dropped on the Trends tab.
-    decomposed_data <- reactive({
-      log_growth <- function(x) c(NA_real_, 100 * diff(log(x)))
-      df <- aligned_indices() %>% arrange(Year)
-      df$LPGrowth <- log_growth(df$LP)
-      df$CapitalDeepening <- log_growth(df$Cap)
-      df$LabourComposition <- log_growth(df$Lab)
-      df$MFPGrowth <- df$LPGrowth - df$CapitalDeepening - df$LabourComposition
-      df
+    # input$interval as a clean, defensive integer >= 1 -- selectInput()
+    # always reports its value back as a string (see GROWTH_INTERVAL_CHOICES'
+    # own comment), and this is read from 3 different places below (the
+    # period math itself, the chart's title/axis, and the CSV filename), so
+    # it's coerced once here rather than 3 times over. Falls back to 1 (the
+    # "1 year (annual)" choice) for anything unexpected (NULL before the
+    # input first exists, or a somehow-invalid value) -- the safest of the
+    # 10 choices to default to, since it's the one Interval that can never
+    # produce a truncated period at all.
+    growth_interval <- reactive({
+      iv <- suppressWarnings(as.integer(input$interval))
+      if (length(iv) == 0 || is.na(iv) || iv < 1) 1L else iv
     })
 
+    # The decomposition itself, one row per *period* rather than per year --
+    # see GROWTH_ACCOUNTING_VARS's own comment for why each series' own
+    # log-difference is what's additive here, and why MFP growth is computed
+    # as the residual rather than read off its own index; that identity
+    # holds exactly over any span, not just a single year (a multi-year
+    # log-difference is just the sum of the annual ones telescoped
+    # together), which is what lets this same computation serve every
+    # Interval choice unchanged. Each of the 3 log-differences is the *total*
+    # growth over the whole period (b_start's index level straight to
+    # b_end's, nothing averaged or divided by the period's width) -- an
+    # average-annual-rate version (dividing every term by the period width)
+    # was tried first, but was deliberately reverted: it makes a longer
+    # period's bar height read as if growth had been *slower*, when really
+    # the same total change is just being spread across more years -- i.e.
+    # exactly the kind of distortion this chart exists to avoid, especially
+    # since the whole point of the Interval picker is to compare periods of
+    # different lengths (including the truncated one) on equal footing.
+    # Total-over-the-period is also the more literal reading of "the
+    # decomposition for 2015-2020" -- e.g. "labour productivity grew 12%
+    # from 2015 to 2020", not "grew at an average of 2.4% a year".
+    #
+    # Periods are built backward from the date range's own end year in
+    # growth_interval()-year steps (see the Interval picker's own comment in
+    # growth_tab_ui() for why end-anchored, not start-anchored) and never
+    # reach outside [input$year_range[1], input$year_range[2]] -- a period
+    # that would otherwise start before the range's own start is clipped to
+    # it instead, which is what can leave the very last (oldest, chronologically
+    # first) period narrower than growth_interval() actually asked for
+    # (Truncated below). At most 1 period can ever come up short this way:
+    # every period from the end backward is a full growth_interval()-year
+    # step until the *next* one would land at or before the start, so only
+    # that final step can possibly be clipped.
     filtered_data <- reactive({
       req(input$year_range)
-      decomposed_data() %>%
-        filter(Year >= input$year_range[1], Year <= input$year_range[2], !is.na(LPGrowth))
+      df <- aligned_indices()
+      interval <- growth_interval()
+      start_yr <- input$year_range[1]
+      end_yr <- input$year_range[2]
+
+      # A period's own growth needs only its 2 endpoint years' index
+      # levels -- match() (not a range filter) so a period is still
+      # computable even if some year strictly *between* its endpoints is
+      # missing from this industry's history, and so a genuinely missing
+      # endpoint surfaces as a clean NA (dropped below) rather than an
+      # error.
+      value_at <- function(col, yr) df[[col]][match(yr, df$Year)]
+
+      period_row <- function(b_start, b_end) {
+        width <- b_end - b_start
+        lp_g <- 100 * log(value_at("LP", b_end) / value_at("LP", b_start))
+        cap_g <- 100 * log(value_at("Cap", b_end) / value_at("Cap", b_start))
+        lab_g <- 100 * log(value_at("Lab", b_end) / value_at("Lab", b_start))
+        data.frame(
+          PeriodStart = b_start, PeriodEnd = b_end,
+          # A 1-year period is labelled just its end year (e.g. "2020"),
+          # matching this tab's original per-year axis exactly at Interval
+          # "1 year" -- only a period wider than 1 year gets a "start-end"
+          # range label.
+          PeriodLabel = if (width == 1) as.character(b_end) else paste0(b_start, "-", b_end),
+          LPGrowth = lp_g, CapitalDeepening = cap_g, LabourComposition = lab_g,
+          MFPGrowth = lp_g - cap_g - lab_g,
+          Truncated = width < interval
+        )
+      }
+
+      rows <- list()
+      b_end <- end_yr
+      while (b_end > start_yr) {
+        b_start <- max(b_end - interval, start_yr)
+        rows[[length(rows) + 1]] <- period_row(b_start, b_end)
+        b_end <- b_start
+      }
+
+      if (length(rows) == 0) {
+        return(data.frame(
+          PeriodStart = integer(0), PeriodEnd = integer(0), PeriodLabel = character(0),
+          LPGrowth = numeric(0), CapitalDeepening = numeric(0), LabourComposition = numeric(0),
+          MFPGrowth = numeric(0), Truncated = logical(0), PosIndex = integer(0)
+        ))
+      }
+      # rows is newest-period-first (built walking backward from end_yr) --
+      # rev() puts it in the chronological, oldest-first order this chart
+      # (and every other chart in this app) reads left to right in.
+      out <- do.call(rbind, rev(rows))
+      # A period whose 2 endpoints aren't both present in this industry's
+      # own history (value_at() returning NA -- e.g. "Other services"' data
+      # ending in 2010, see GROWTH_ACCOUNTING_VARS's own comment) can't have
+      # its growth computed at all -- dropped, the same "nothing to show"
+      # outcome a genuinely missing year already got before Interval existed.
+      out <- out[!is.na(out$LPGrowth) & !is.na(out$CapitalDeepening) & !is.na(out$LabourComposition), ]
+      out$PosIndex <- seq_len(nrow(out))
+      out
     })
 
-    # Shared by output$chart_container (which needs just the year count, to
-    # decide how wide the chart should be) and output$chart (which needs the
-    # actual data) -- see the matching comment on the Rankings tab's own
+    # A brief, non-blocking heads-up (see csls_notify()) that the oldest
+    # period on screen is shorter than the others -- easy to miss otherwise,
+    # since the muted-colour treatment (see output$chart) only reads as
+    # *different*, not as *why*. tryCatch mirrors growth_chart_period_count()
+    # below: filtered_data() can be mid-validate() (e.g. no data for this
+    # industry), which would otherwise propagate straight through an any()
+    # call and crash this reactive instead of just reporting "nothing to
+    # flag" for that render.
+    growth_has_truncated_period <- reactive({
+      tryCatch(any(filtered_data()$Truncated), error = function(e) FALSE)
+    })
+
+    observeEvent(growth_has_truncated_period(), {
+      if (isTRUE(growth_has_truncated_period())) {
+        trunc_row <- filtered_data()[filtered_data()$Truncated, ][1, ]
+        span <- trunc_row$PeriodEnd - trunc_row$PeriodStart
+        csls_notify(
+          sprintf(
+            "The %s period only spans %d year%s -- shorter than the %d-year Interval used for the rest, so it's shown in muted colour.",
+            trunc_row$PeriodLabel, span, if (span == 1) "" else "s", growth_interval()
+          ),
+          type = "message"
+        )
+      }
+    })
+
+    # Shared by output$chart_container (which needs just the period count,
+    # to decide how wide the chart should be) and output$chart (which needs
+    # the actual data) -- see the matching comment on the Rankings tab's own
     # ranking_chart_row_count() for why this is wrapped in tryCatch: a
     # validate() condition from filtered_data() (e.g. "No data for this
     # industry") would otherwise propagate into this renderUI too, replacing
     # the plotlyOutput it builds and leaving output$chart with nothing left
     # to render its own, more specific message into.
-    growth_chart_year_count <- reactive({
+    growth_chart_period_count <- reactive({
       tryCatch(nrow(filtered_data()), error = function(e) 0L)
     })
 
     output$chart_container <- renderUI({
-      n <- growth_chart_year_count()
-      if (n > GROWTH_CHART_YEAR_THRESHOLD) {
-        px <- n * GROWTH_CHART_PX_PER_YEAR
+      n <- growth_chart_period_count()
+      if (n > GROWTH_CHART_PERIOD_THRESHOLD) {
+        px <- n * GROWTH_CHART_PX_PER_PERIOD
         # Outer div is the actual scroll viewport -- height:100% so it still
         # fills the same vertical space plotlyOutput(height="100%") always
         # has here (nothing about this chart needs *taller*, only *wider*,
@@ -2406,63 +2577,99 @@ growth_tab_server <- function(id, raw_data) {
         "No values to plot for this view -- try widening the date range."
       ))
       col <- GROWTH_ACCOUNTING_COLORS
+      interval <- growth_interval()
 
-      # 2 bars per year, positioned by literal x-value arithmetic (Year -/+
-      # GROWTH_BAR_OFFSET) rather than offsetgroup -- see that constant's own
-      # comment for why (offsetgroup doesn't separate bars at all once
-      # barmode is "stack"/"relative", only under "group", confirmed against
-      # a real render). barmode "relative" (a layout-level, not per-trace,
-      # setting) is what makes the 3 "other factors" traces -- sharing the
-      # same Year + GROWTH_BAR_OFFSET x-values -- stack into one bar:
-      # positive ones upward from zero, negative ones (MFP growth, in a
-      # downturn) downward from zero, rather than plain top-to-bottom
-      # cumulative ("stack" mode) which would draw a negative MFP segment
-      # overlapping the positive ones instead of visibly subtracting from
-      # them. The labour productivity growth trace's different x-values
-      # (Year - GROWTH_BAR_OFFSET) never coincide with those, so it never
-      # combines with anything -- it just renders as its own bar.
+      # Per-point (not per-trace) marker colours -- ifelse() recycles the 2
+      # scalar branches against df$Truncated, so every period gets that
+      # series' normal colour except the (at most 1) truncated one, which
+      # gets blend_toward_grey()'s muted version instead. This is what
+      # actually renders the "slightly more greyscale" treatment; the notice
+      # in growth_has_truncated_period()'s observeEvent above is what tells a
+      # reader *why* one period looks different.
+      point_colors <- function(base_color) {
+        ifelse(df$Truncated, blend_toward_grey(base_color), base_color)
+      }
+
+      # 2 bars per period, positioned by literal x-value arithmetic
+      # (PosIndex -/+ GROWTH_BAR_OFFSET) rather than offsetgroup -- see that
+      # constant's own comment for why (offsetgroup doesn't separate bars at
+      # all once barmode is "stack"/"relative", only under "group",
+      # confirmed against a real render). barmode "relative" (a
+      # layout-level, not per-trace, setting) is what makes the 3 "other
+      # factors" traces -- sharing the same PosIndex + GROWTH_BAR_OFFSET
+      # x-values -- stack into one bar: positive ones upward from zero,
+      # negative ones (MFP growth, in a downturn) downward from zero, rather
+      # than plain top-to-bottom cumulative ("stack" mode) which would draw
+      # a negative MFP segment overlapping the positive ones instead of
+      # visibly subtracting from them. The labour productivity growth
+      # trace's different x-values (PosIndex - GROWTH_BAR_OFFSET) never
+      # coincide with those, so it never combines with anything -- it just
+      # renders as its own bar.
+      #
+      # text = ~PeriodLabel + "%{text}" in every hovertemplate -- with a
+      # multi-year Interval a bar's x-position alone (see PosIndex above)
+      # no longer reads as a specific date the way a whole Year tick used
+      # to, so the period it belongs to is spelled out in the tooltip too,
+      # not left to the tick label below it. textposition = "none" on every
+      # trace -- confirmed empirically (a real render) that a bar trace's
+      # own default textposition ("auto") draws `text` directly on/above
+      # each bar the moment it's set at all, not just make it available to
+      # hovertemplate's %{text} -- every bar was showing its own period
+      # label stamped on top of it, on top of the *already-present* x-axis
+      # tick label doing the same job, before this was added.
       plot_ly(data = df) %>%
         add_trace(
-          x = ~Year - GROWTH_BAR_OFFSET, y = ~LPGrowth, type = "bar",
-          width = GROWTH_BAR_WIDTH, showlegend = FALSE,
-          marker = list(color = col[["lp"]]),
-          hovertemplate = "<b>%{y:.1f}%</b><br>Labour productivity growth<extra></extra>"
+          x = ~PosIndex - GROWTH_BAR_OFFSET, y = ~LPGrowth, type = "bar", text = ~PeriodLabel,
+          width = GROWTH_BAR_WIDTH, showlegend = FALSE, textposition = "none",
+          marker = list(color = point_colors(col[["lp"]])),
+          hovertemplate = "<b>%{y:.1f}%</b><br>Labour productivity growth<br>%{text}<extra></extra>"
         ) %>%
         add_trace(
-          x = ~Year + GROWTH_BAR_OFFSET, y = ~CapitalDeepening, type = "bar",
-          width = GROWTH_BAR_WIDTH, showlegend = FALSE,
-          marker = list(color = col[["cap"]]),
+          x = ~PosIndex + GROWTH_BAR_OFFSET, y = ~CapitalDeepening, type = "bar", text = ~PeriodLabel,
+          width = GROWTH_BAR_WIDTH, showlegend = FALSE, textposition = "none",
+          marker = list(color = point_colors(col[["cap"]])),
           # GROWTH_ACCOUNTING_VARS[["cap"]] -- StatCan's own exact variable
           # name, not a shorter paraphrase -- see the matching comment on
           # growth_tab_ui()'s legend for why.
-          hovertemplate = paste0("<b>%{y:.1f} pp</b><br>", GROWTH_ACCOUNTING_VARS[["cap"]], "<extra></extra>")
+          hovertemplate = paste0("<b>%{y:.1f} pp</b><br>", GROWTH_ACCOUNTING_VARS[["cap"]], "<br>%{text}<extra></extra>")
         ) %>%
         add_trace(
-          x = ~Year + GROWTH_BAR_OFFSET, y = ~LabourComposition, type = "bar",
-          width = GROWTH_BAR_WIDTH, showlegend = FALSE,
-          marker = list(color = col[["lab"]]),
-          hovertemplate = paste0("<b>%{y:.1f} pp</b><br>", GROWTH_ACCOUNTING_VARS[["lab"]], "<extra></extra>")
+          x = ~PosIndex + GROWTH_BAR_OFFSET, y = ~LabourComposition, type = "bar", text = ~PeriodLabel,
+          width = GROWTH_BAR_WIDTH, showlegend = FALSE, textposition = "none",
+          marker = list(color = point_colors(col[["lab"]])),
+          hovertemplate = paste0("<b>%{y:.1f} pp</b><br>", GROWTH_ACCOUNTING_VARS[["lab"]], "<br>%{text}<extra></extra>")
         ) %>%
         add_trace(
-          x = ~Year + GROWTH_BAR_OFFSET, y = ~MFPGrowth, type = "bar",
-          width = GROWTH_BAR_WIDTH, showlegend = FALSE,
-          marker = list(color = col[["mfp"]]),
-          hovertemplate = "<b>%{y:.1f} pp</b><br>Multifactor productivity growth (residual)<extra></extra>"
+          x = ~PosIndex + GROWTH_BAR_OFFSET, y = ~MFPGrowth, type = "bar", text = ~PeriodLabel,
+          width = GROWTH_BAR_WIDTH, showlegend = FALSE, textposition = "none",
+          marker = list(color = point_colors(col[["mfp"]])),
+          hovertemplate = "<b>%{y:.1f} pp</b><br>Multifactor productivity growth (residual)<br>%{text}<extra></extra>"
         ) %>%
         layout(
-          title = paste0("Labour productivity growth decomposition (", input$year_range[1], "-", input$year_range[2], ")<br>",
-                          "<sup style='color:", INK_MUTED, "'>", input$industry, "</sup>"),
+          title = paste0(
+            "Labour productivity growth decomposition (", input$year_range[1], "-", input$year_range[2], ")",
+            if (interval > 1) paste0(", ", interval, "-year periods") else "",
+            "<br><sup style='color:", INK_MUTED, "'>", input$industry, "</sup>"
+          ),
           barmode = "relative",
           xaxis = list(
-            title = "Year", tickformat = "d", gridcolor = GRIDLINE, color = INK_MUTED,
-            # tick0 pinned to this render's own minimum Year (not left to
-            # Plotly's own auto-placement) -- the actual bars sit at
-            # Year +/- GROWTH_BAR_OFFSET, not on a whole Year, so without an
-            # explicit tick0 there's no guarantee autoticking would still
-            # land exactly on whole years.
-            dtick = 1, tick0 = min(df$Year)
+            title = if (interval == 1) "Year" else "Period",
+            # tickvals/ticktext (not dtick/tick0/tickformat) -- PosIndex is
+            # this chart's own 1/2/3/... position for each period, not a
+            # calendar year (see PosIndex's own comment in filtered_data()),
+            # so every position is given its real date-range label
+            # explicitly rather than relying on Plotly's numeric autoticking
+            # to land on (and format as a plain year) the right values.
+            tickvals = df$PosIndex, ticktext = df$PeriodLabel,
+            gridcolor = GRIDLINE, color = INK_MUTED
           ),
           yaxis = list(
+            # Just "Percentage points" (not "...per year"/"average annual")
+            # -- every bar is the *total* growth over its own period, however
+            # wide that period is (see filtered_data()'s own comment on why
+            # this isn't divided down to an annual rate), so a per-year
+            # framing on the axis itself would misdescribe it the moment
+            # Interval is above "1 year".
             title = "Percentage points", gridcolor = GRIDLINE, color = INK_MUTED,
             ticksuffix = "%"
           ),
@@ -2471,8 +2678,8 @@ growth_tab_server <- function(id, raw_data) {
           showlegend = FALSE,
           # "closest" (Plotly's own single-point default), not "x unified"
           # like every other chart in this app -- unified hover groups by
-          # exact x-match, but the 2 bars in one year deliberately sit at 2
-          # different x-values now (see GROWTH_BAR_OFFSET), so "x unified"
+          # exact x-match, but the 2 bars in one period deliberately sit at
+          # 2 different x-values now (see GROWTH_BAR_OFFSET), so "x unified"
           # would only ever surface one bar's tooltip at a time anyway,
           # inconsistently depending on which bar's exact x the cursor was
           # nearest to -- "closest" is at least honest about that.
@@ -2489,15 +2696,15 @@ growth_tab_server <- function(id, raw_data) {
           ))
         )
       # No forced initial scroll position here -- left at the browser's own
-      # default (scrollLeft 0, i.e. the oldest years), deliberately, even
-      # once there are more years than fit on screen (see
-      # GROWTH_CHART_YEAR_THRESHOLD/output$chart_container): the y-axis
+      # default (scrollLeft 0, i.e. the oldest periods), deliberately, even
+      # once there are more periods than fit on screen (see
+      # GROWTH_CHART_PERIOD_THRESHOLD/output$chart_container): the y-axis
       # (title + tick labels) is drawn once, at the *left* edge of this
       # whole wide plot, same as any other Plotly chart -- it isn't a fixed
       # element outside the scrollable area, so starting scrolled to the
       # right (an earlier version of this chart auto-scrolled there, to
-      # open on the most recent years) scrolled the axis itself out of view
-      # right along with the oldest years. Left/default keeps the axis
+      # open on the most recent periods) scrolled the axis itself out of
+      # view right along with the oldest ones. Left/default keeps the axis
       # always in view on open; see www/ui_helpers.js's own "shown.bs.tab"
       # listener for how a reader still discovers this chart scrolls
       # (a brief scroll-and-back nudge the first time this tab is shown),
@@ -2514,24 +2721,35 @@ growth_tab_server <- function(id, raw_data) {
     output$download_csv <- downloadHandler(
       filename = function() {
         sprintf(
-          "growth_accounting_%s_%s-%s_%s.csv",
+          "growth_accounting_%s_%s-%s_%syr_%s.csv",
           gsub("[^A-Za-z0-9]+", "-", input$industry),
-          input$year_range[1], input$year_range[2], format(Sys.Date(), "%Y%m%d")
+          input$year_range[1], input$year_range[2], growth_interval(), format(Sys.Date(), "%Y%m%d")
         )
       },
       content = function(file) {
         out <- filtered_data() %>%
-          transmute(Year, Industry = input$industry, LPGrowth, CapitalDeepening, LabourComposition, MFPGrowth)
+          transmute(
+            PeriodStart, PeriodEnd, PeriodLabel, Industry = input$industry,
+            LPGrowth, CapitalDeepening, LabourComposition, MFPGrowth,
+            Truncated = ifelse(Truncated, "Yes", "No")
+          )
         # Column headers assigned after the fact (not as transmute()'s own
         # backtick-quoted names) so the capital/labour ones can be built
         # from GROWTH_ACCOUNTING_VARS -- StatCan's own exact variable names
         # -- rather than a separately-typed paraphrase; see the matching
-        # comment on growth_tab_ui()'s legend for why.
+        # comment on growth_tab_ui()'s legend for why. No "average annual"
+        # on any of these -- every growth column is the *total* change from
+        # Period start to Period end (see filtered_data()'s own comment on
+        # why this isn't divided down to an annual rate), accurate as
+        # written at Interval "1 year" too (the total over a 1-year period
+        # is just that year's own growth).
         names(out) <- c(
-          "Year", "Industry", "Labour productivity growth (%)",
+          "Period start", "Period end", "Period", "Industry",
+          "Labour productivity growth (%)",
           paste0(GROWTH_ACCOUNTING_VARS[["cap"]], " (pp)"),
           paste0(GROWTH_ACCOUNTING_VARS[["lab"]], " (pp)"),
-          "Multifactor productivity growth, residual (pp)"
+          "Multifactor productivity growth, residual (pp)",
+          "Shorter than Interval"
         )
         write.csv(out, file, row.names = FALSE)
       }
