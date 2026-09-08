@@ -275,21 +275,49 @@ GROWTH_CHART_PX_PER_PERIOD <- 70
 GROWTH_BAR_OFFSET <- 0.2
 GROWTH_BAR_WIDTH <- 0.35
 
-# Plain-language explanation shown below the main panel for the currently
-# selected variable -- placeholder text for every variable until real
-# definitions are written; renderUI still treats an empty/missing entry as
-# "show nothing" (see variable_definition_ui() below), so a future entry can
-# still be blanked out for a self-explanatory variable the same way the old
-# labour productivity dashboard did for "Total number of jobs".
-VARIABLE_DEFINITIONS <- setNames(
-  rep("Variable definition comes here", length(VARIABLE_ORDER)),
-  VARIABLE_ORDER
+# Plain-language explanation shown below the Variable picker, keyed by name
+# (not positionally paired with VARIABLE_ORDER) so a lookup miss is
+# impossible to introduce by reordering one list and not the other.
+# renderUI still treats an empty/missing entry as "show nothing" (see
+# variable_definition_ui() below), so a future entry can still be blanked
+# out for a self-explanatory variable the same way the old labour
+# productivity dashboard did for "Total number of jobs".
+VARIABLE_DEFINITIONS <- c(
+  "Multifactor productivity" = "A measure of how efficiently an industry uses labour and capital together to produce output. Calculated by Statistics Canada as real GDP divided by combined labour and capital inputs. Growth in MFP reflects things like technological change and economies of scale, not just using more workers or machines.",
+  "Labour productivity" = "A measure of how efficiently goods and services are produced by workers. Calculated by Statistics Canada as real value added divided by total hours worked.",
+  "Capital productivity" = "A measure of how efficiently an industry uses its capital to produce output. Calculated by Statistics Canada as real GDP divided by capital input.",
+  "Real gross domestic product (GDP)" = "The total dollar value of an industry's output minus the cost of the inputs (materials, energy, etc.) used to produce it. Adjusted by Statistics Canada to 2017 dollars by default, removing the effects of inflation. Statistics Canada treats this as the same measure as real value added -- just the name used in the MFP program.",
+  "Labour input" = "A single measure of the total labour used in production. Calculated by Statistics Canada by combining hours worked across groups of workers (classified by education, experience, and employment type), weighted by hourly compensation.",
+  "Hours worked" = "The total number of hours that a person devotes to work, whether paid or unpaid.",
+  "Labour composition" = "A measure of how the skill mix of the workforce changes over time. Calculated as labour input divided by hours worked. Rises when the workforce shifts toward more experienced or educated workers.",
+  "Labour input of workers with primary or secondary education" = "The portion of total labour input contributed by workers whose highest education is high school or below.",
+  "Labour input of workers with some or completed post-secondary certificate or diploma" = "The portion of total labour input from workers with some post-secondary education or a non-degree certificate or diploma (includes those who attended university without completing a bachelor's degree).",
+  "Labour input of workers with university degree or above" = "The portion of total labour input from workers with a bachelor's degree or higher.",
+  "Capital input" = "A measure of the productive services an industry gets from its capital assets (equipment, structures, inventories, and land) in a given year. Calculated by Statistics Canada by combining capital stocks, weighted by the cost of capital for each asset type.",
+  "Capital stock" = "The dollar value of an industry's accumulated capital assets still in use, after accounting for depreciation. Estimated by Statistics Canada using the perpetual inventory method for most equipment and structures, and other methods for inventories and land.",
+  "Capital composition" = "A measure of how the mix of capital assets changes over time. Calculated as capital input divided by capital stock. Rises when investment shifts toward shorter-lived assets like equipment, which deliver more service per dollar than longer-lived assets like buildings.",
+  "Capital input of information and communications technologies" = "The portion of total capital input from computer hardware, software, and telecommunications equipment.",
+  "Capital input of non-information and communications technologies" = "The portion of total capital input from all other capital assets (machinery, vehicles, buildings, and structures).",
+  "Combined labour and capital inputs" = "A single measure combining labour input and capital input, weighted by each one's share of total production costs. Used as the denominator in the multifactor productivity calculation.",
+  "Gross domestic product (GDP)" = "The dollar value of what an industry produces, minus the cost of the inputs (materials, energy, etc.) it used up to produce it. Measured in today's dollars, so it is affected by inflation.",
+  "Labour compensation" = "All payments in cash or in-kind made by domestic producers to workers for services rendered.",
+  "Labour compensation of workers with primary or secondary education" = "The portion of total labour compensation paid to workers whose highest education is high school or below.",
+  "Labour compensation of workers with some or completed post-secondary certificate or diploma" = "The portion of total labour compensation paid to workers with some post-secondary education or a non-degree certificate or diploma.",
+  "Labour compensation of workers with university degree or above" = "The portion of total labour compensation paid to workers with a bachelor's degree or higher.",
+  "Capital cost" = "The income earned by the owners of capital (profit, depreciation, rent, and interest). Calculated by Statistics Canada as GDP (current dollars) minus labour compensation.",
+  "Capital cost of information and communications technologies" = "The portion of total capital cost attributable to ICT assets, roughly what it would cost to rent that equipment and software for a year.",
+  "Capital cost of non-information and communications technologies" = "The portion of total capital cost attributable to all other capital assets (machinery, vehicles, buildings, and structures).",
+  "Contribution of capital intensity to labour productivity growth" = "The portion of labour productivity growth from workers having more capital to work with. Calculated as the growth in capital services per hour, multiplied by capital's share of total costs.",
+  "Contribution of labour composition to labour productivity growth" = "The portion of labour productivity growth from the workforce becoming more educated or experienced. Calculated as the growth in labour composition, multiplied by labour's share of total costs."
 )
 
 # Plain-language explanation for the currently selected Variable, shown
-# below the picker on all 4 tabs (each just does
-# `output$variable_definition <- renderUI(variable_definition_ui(input$variable))`)
-# -- factored out so the 4 copies of this logic can't drift.
+# below the picker on the Trends tab only (trend_tab_server() is the one
+# remaining `output$variable_definition <- renderUI(variable_definition_ui(input$variable))`
+# call) -- the Compare/Rankings/Data tabs used to show the same text under
+# their own Variable pickers too, which was redundant once a reader could
+# always flip to Trends for it, so those 3 uiOutput()/renderUI() pairs were
+# removed and this definition now lives in exactly one place.
 variable_definition_ui <- function(variable) {
   def <- VARIABLE_DEFINITIONS[[variable]]
   if (is.null(def) || !nzchar(def)) return(NULL)
@@ -1207,7 +1235,6 @@ ranking_tab_ui <- function(id, init_df, variable_choices) {
           tree_data = flat_tree_nodes(variable_choices), selected = DEFAULT_VARIABLE,
           placeholder = "Search variables..."
         ),
-        uiOutput(ns("variable_definition")),
         sliderInput(
           ns("year_range"), "Date range",
           min = min(init_df$Year), max = max(init_df$Year),
@@ -1494,8 +1521,6 @@ ranking_tab_server <- function(id, raw_data, variable_uom_lookup) {
       p
     })
 
-    output$variable_definition <- renderUI(variable_definition_ui(input$variable))
-
     # raw_data() is the dependency, not the value used -- reading it just
     # ties this to the same reactiveFileReader invalidation as this tab's
     # own data, so the "as of" date updates the moment a new pipeline run
@@ -1575,7 +1600,6 @@ tab_module_ui <- function(id, init_df, kind, variable_choices, industry_tree) {
           tree_data = flat_tree_nodes(variable_choices), selected = DEFAULT_VARIABLE,
           placeholder = "Search variables..."
         ),
-        uiOutput(ns("variable_definition")),
         tags$strong("Compare"),
         # Collapsible tree dropdown -- closed to just the root aggregate by
         # default, arrow to expand a branch, click a label to pick it.
@@ -2159,8 +2183,6 @@ tab_module_server <- function(id, raw_data, kind, variable_uom_lookup) {
         )
       })
     }
-
-    output$variable_definition <- renderUI(variable_definition_ui(input$variable))
 
     # raw_data() is the dependency, not the value used -- reading it just
     # ties this to the same reactiveFileReader invalidation as this tab's
