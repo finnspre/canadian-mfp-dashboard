@@ -203,4 +203,27 @@
       window.location.reload();
     }
   });
+
+  // Definitions tab's search box (see definitions_tab_ui() in app.R) --
+  // filters the glossary to just the terms (each .definitions-item's own
+  // data-term, set once server-side rather than re-lowercased here on
+  // every keystroke) containing the typed text, never matching against the
+  // definition text itself. A plain document-level delegated "input"
+  // listener, not one bound directly to #definitions-search-input, since
+  // that element sits inside a Shiny tab pane that doesn't exist in the DOM
+  // until the app's first render -- same reasoning as the disconnect-retry
+  // listener just above. Case-insensitive substring match, empty query
+  // shows everything.
+  document.addEventListener("input", function (e) {
+    if (!e.target || e.target.id !== "definitions-search-input") return;
+    var query = e.target.value.trim().toLowerCase();
+    var anyVisible = false;
+    document.querySelectorAll(".definitions-item").forEach(function (item) {
+      var isMatch = query === "" || (item.getAttribute("data-term") || "").indexOf(query) !== -1;
+      item.hidden = !isMatch;
+      if (isMatch) anyVisible = true;
+    });
+    var empty = document.getElementById("definitions-empty");
+    if (empty) empty.hidden = anyVisible;
+  });
 })();

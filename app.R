@@ -283,13 +283,13 @@ GROWTH_BAR_WIDTH <- 0.35
 # out for a self-explanatory variable the same way the old labour
 # productivity dashboard did for "Total number of jobs".
 VARIABLE_DEFINITIONS <- c(
-  "Multifactor productivity" = "A measure of how efficiently an industry uses labour and capital together to produce output. Calculated by Statistics Canada as real GDP divided by combined labour and capital inputs. Growth in MFP reflects things like technological change and economies of scale, not just using more workers or machines.",
+  "Multifactor productivity" = "A measure of how efficiently an industry uses labour and capital together to produce output. Calculated by Statistics Canada as real GDP divided by combined labour and capital inputs.",
   "Labour productivity" = "A measure of how efficiently goods and services are produced by workers. Calculated by Statistics Canada as real value added divided by total hours worked.",
   "Capital productivity" = "A measure of how efficiently an industry uses its capital to produce output. Calculated by Statistics Canada as real GDP divided by capital input.",
-  "Real gross domestic product (GDP)" = "The total dollar value of an industry's output minus the cost of the inputs (materials, energy, etc.) used to produce it. Adjusted by Statistics Canada to 2017 dollars by default, removing the effects of inflation. Statistics Canada treats this as the same measure as real value added -- just the name used in the MFP program.",
+  "Real gross domestic product (GDP)" = "The total dollar value of an industry's output minus the cost of the inputs (materials, energy, etc.) used to produce it. Adjusted by Statistics Canada to 2017 dollars by default, removing the effects of inflation.",
   "Labour input" = "A single measure of the total labour used in production. Calculated by Statistics Canada by combining hours worked across groups of workers (classified by education, experience, and employment type), weighted by hourly compensation.",
   "Hours worked" = "The total number of hours that a person devotes to work, whether paid or unpaid.",
-  "Labour composition" = "A measure of how the skill mix of the workforce changes over time. Calculated as labour input divided by hours worked. Rises when the workforce shifts toward more experienced or educated workers.",
+  "Labour composition" = "A measure of how the skill mix of the workforce changes over time. Calculated as labour input divided by hours worked.",
   "Labour input of workers with primary or secondary education" = "The portion of total labour input contributed by workers whose highest education is high school or below.",
   "Labour input of workers with some or completed post-secondary certificate or diploma" = "The portion of total labour input from workers with some post-secondary education or a non-degree certificate or diploma (includes those who attended university without completing a bachelor's degree).",
   "Labour input of workers with university degree or above" = "The portion of total labour input from workers with a bachelor's degree or higher.",
@@ -321,7 +321,110 @@ VARIABLE_DEFINITIONS <- c(
 variable_definition_ui <- function(variable) {
   def <- VARIABLE_DEFINITIONS[[variable]]
   if (is.null(def) || !nzchar(def)) return(NULL)
-  p(class = "text-muted small", strong(paste0(variable, ": ")), def)
+  # Spells out the acronym just this once, right where a reader is most
+  # likely to meet it cold -- "MFP" gets used on its own elsewhere in this
+  # app (e.g. the Growth Accounting tab's legend/toasts) without ever being
+  # expanded first. Display-only: `variable` itself stays the plain
+  # "Multifactor productivity" (the actual StatCan variable name, matching
+  # what the picker above and the Definitions tab both show), so this
+  # doesn't touch VARIABLE_DEFINITIONS' lookup key.
+  label <- if (variable == "Multifactor productivity") "Multifactor productivity (MFP)" else variable
+  p(class = "text-muted small", strong(paste0(label, ": ")), def)
+}
+
+# Dashboard concepts shown at the end of the Definitions tab's glossary,
+# after every VARIABLE_DEFINITIONS entry -- not StatCan variables
+# themselves (they never appear as a value in the data), so folding them
+# into VARIABLE_DEFINITIONS instead would be the wrong home for them: that
+# vector's whole meaning is "keyed by the exact StatCan variable name", and
+# ordered_unique() (see series_choices()) would just filter a non-variable
+# key straight back out of the Variable picker anyway, silently relying on
+# that filtering rather than keeping VARIABLE_DEFINITIONS honestly scoped to
+# real variables. A separate named vector keeps that scoping exact while
+# still letting the Definitions tab explain broader dashboard methodology
+# alongside the variable-by-variable glossary.
+GLOSSARY_EXTRA_TERMS <- c(
+  "Growth accounting" = "A method Statistics Canada uses to explain what drives labour productivity growth. It divides labour productivity growth into the part coming from increases in capital intensity, increases in skill levels of workers (labour composition), and multifactor productivity (which captures everything else such as technological change, organizational improvements, or economies of scale). The residual portion of labour productivity growth not explained by capital intensity or labour composition is what's counted as multifactor productivity growth. The three pieces sum to total labour productivity growth, which is what lets you say how much of a given year's gain came from each source."
+)
+
+# One .definitions-item (a dt/dd pair wrapped in a div -- see
+# definitions_tab_ui()'s own comment on why) for either a VARIABLE_ORDER
+# entry or a GLOSSARY_EXTRA_TERMS one -- shared so both loops below stay in
+# lockstep on the exact markup the search listener in www/ui_helpers.js
+# depends on (the data-term attribute), rather than one drifting from the
+# other if only one were ever edited later.
+definitions_item <- function(term, def) {
+  if (is.null(def) || !nzchar(def)) return(NULL)
+  tags$div(class = "definitions-item", `data-term` = tolower(term), tags$dt(term), tags$dd(def))
+}
+
+# The Definitions tab -- a standing glossary of every VARIABLE_DEFINITIONS
+# entry, in VARIABLE_ORDER (the same order the Variable picker itself lists
+# them in), plus GLOSSARY_EXTRA_TERMS' broader dashboard concepts appended
+# at the end, for a reader who wants to browse the full list up front rather
+# than opening each variable one at a time off the Trends tab's picker.
+# Skips the same "" -> hide entirely case variable_definition_ui() does
+# above, so a future variable blanked out there (self-explanatory, e.g. the
+# old labour productivity dashboard's "Total number of jobs") drops out of
+# this list too rather than showing an empty definition.
+#
+# No `id`/NS() of its own, unlike every other *_tab_ui() in this file --
+# this tab has no inputs, outputs, or per-session state at all (it just
+# renders the same fixed glossary for everyone), so there's nothing here
+# that would ever need namespacing; nav_panel() below calls it with no
+# arguments, and there's no matching *_tab_server().
+definitions_tab_ui <- function() {
+  card(
+    class = "definitions-tab-card",
+    # Wrapped together rather than left as 2 direct card children -- bslib's
+    # own card-body is a flex column with a fixed ~24px `gap` between every
+    # direct child, applied independently of (i.e. on top of) each child's
+    # own margin, so no amount of margin tweaking on the title/subtitle
+    # alone could pull them closer than that 24px floor. Grouping both into
+    # one wrapper makes them a single flex item from the card-body's own
+    # point of view, so that 24px only ever applies *outside* this div (down
+    # to the search box below); the small, tight gap actually wanted between
+    # title and subtitle is then just ordinary collapsed block-margin inside
+    # it (see the CSS below), free of the flex gap entirely.
+    tags$div(
+      class = "definitions-header",
+      tags$h4(class = "definitions-title", "Definitions"),
+      p(class = "definitions-subtitle text-muted small", "Plain-language explanations of terms used throughout this dashboard.")
+    ),
+    # Plain client-side filter -- see www/ui_helpers.js's "definitions-search-input"
+    # input listener -- rather than a Shiny textInput()/renderUI() round-trip:
+    # this tab has no server component at all (see definitions_tab_ui()'s own
+    # comment above), and a search this simple (substring match against each
+    # term's own name, nothing server-side to compute) doesn't need one --
+    # every candidate row is already sitting in the DOM below, so JS just
+    # shows/hides them directly. type="search" gets the browser's own native
+    # clear ("x") button for free, same as a real search box.
+    tags$div(
+      class = "definitions-search",
+      tags$input(
+        type = "search", id = "definitions-search-input", class = "form-control",
+        placeholder = "Search for a term...", autocomplete = "off",
+        `aria-label` = "Search for a term"
+      )
+    ),
+    tags$dl(
+      class = "definitions-list",
+      # One <div class="definitions-item"> per dt/dd pair (a dl's content
+      # model allows grouping dt+dd inside a div) rather than flat sibling
+      # dt/dd -- gives the search listener above one element per term to
+      # toggle `hidden` on, and data-term (lowercased once here, not
+      # repeatedly in JS on every keystroke) is what it matches the search
+      # box's value against -- the term only, never the definition text,
+      # per how this search is meant to work. See definitions_item().
+      lapply(VARIABLE_ORDER, function(variable) definitions_item(variable, VARIABLE_DEFINITIONS[[variable]])),
+      lapply(names(GLOSSARY_EXTRA_TERMS), function(term) definitions_item(term, GLOSSARY_EXTRA_TERMS[[term]]))
+    ),
+    # Shown only once a search leaves nothing visible -- same "a message,
+    # not a silent blank result" convention the Trends/Rankings/Compare
+    # tabs' own no-data guards already follow (see VARIABLE_DEFINITIONS'
+    # comment above and scripts/verify_app.R's "UX-state" checks).
+    p(id = "definitions-empty", class = "text-muted small", hidden = NA, "No terms match your search.")
+  )
 }
 
 # Levels up to and including `level` -- e.g. "2-digit" resolves to
@@ -3079,6 +3182,13 @@ ui <- function(request) {
           on one screen, so every one of them stays fully legible instead
           of being squeezed/clipped into a fixed budget. */
        .tab-pane.active > .card.ranking-tab-card { overflow-y: auto; }
+       /* Same mechanism again, for the Definitions tab (see
+          definitions_tab_ui()'s definitions-tab-card class) -- unlike the
+          other 3 cards this scrolls, this one has no sidebar/chart at all,
+          just a plain glossary that routinely runs longer than one screen
+          (26 variables' worth of definitions), so it needs the same
+          card-level scrollbar rather than being clipped to the viewport. */
+       .tab-pane.active > .card.definitions-tab-card { overflow-y: auto; }
        /* Every tab's Download dropdown (see download_menu_ui()) -- full
           width so the toggle button lines up with the other sidebar
           controls above it instead of sizing to its own label. */
@@ -3208,6 +3318,47 @@ ui <- function(request) {
        .growth-legend-list li { display: flex; align-items: center; gap: 0.5rem; padding: 2px 0; font-size: 13px; }
        .growth-legend-swatch { width: 0.7rem; height: 0.7rem; border-radius: 50%; flex-shrink: 0; }"
     )),
+    # The Definitions tab (see definitions_tab_ui()'s own comment on why
+    # title+subtitle are wrapped in .definitions-header to begin with). h4's
+    # ~0.5rem margin-bottom (Bootstrap's own default heading rule;
+    # csls-shiny-theme.css's h1-h6 rule only zeroes margin-top) is the one
+    # bit of spacing actually worth zeroing by hand here -- bslib's own
+    # bundled CSS (`.bslib-card .card-body p`) already zeroes a <p>'s own
+    # margin-top for free inside any card, descendant combinator so it
+    # reaches straight through the .definitions-header wrapper div too, and
+    # already out-specifies a bare `.definitions-subtitle` rule trying to
+    # set one explicitly (confirmed via the live cascade: a margin-top set
+    # here is silently never applied) -- so definitions-subtitle needs no
+    # margin-top rule of its own at all; the small gap the title and
+    # subtitle actually end up with is just ordinary line-height leading on
+    # each, which alone already reads as "just underneath", not flush.
+    # definitions-search's own top margin is trimmed slightly too, nudging
+    # the search box (and everything below it, which cascades in normal
+    # flow from there) up in turn so the whole block reads as one
+    # tightened-up unit rather than the old gap just reappearing lower down.
+    tags$style(HTML(
+      ".definitions-title { margin-bottom: 0; }
+       .definitions-search { margin: 0.75rem 0 1rem; max-width: 320px; }"
+    )),
+    # The glossary itself -- a plain <dl>, one .definitions-item (a dt/dd
+    # pair, see definitions_tab_ui()'s own comment on why each is wrapped in
+    # a div) per variable, spaced so each entry reads as its own block
+    # rather than running into the next one the way a browser's unstyled
+    # <dl> (dt/dd flush together, no gap before the next dt) would.
+    # .definitions-item[hidden] is the search box's own doing (see
+    # www/ui_helpers.js's "definitions-search-input" listener) -- spelled
+    # out explicitly rather than relying on the bare [hidden] the browser
+    # already applies by default, since an author-origin display rule on
+    # the same element (were one ever added here) would otherwise be free
+    # to override that UA-level default regardless of specificity.
+    tags$style(HTML(
+      ".definitions-list { margin: 0; }
+       .definitions-item { margin-top: 1rem; }
+       .definitions-item:first-child { margin-top: 0; }
+       .definitions-item[hidden] { display: none; }
+       .definitions-item dt { font-weight: 600; margin: 0; }
+       .definitions-item dd { margin: 0.25rem 0 0 0; }"
+    )),
     tags$script(src = versioned_asset("tree_select.js")),
     tags$script(src = versioned_asset("ui_helpers.js")),
     # Logo, left of the nav-pills row (no on-page title text anymore -- the
@@ -3261,7 +3412,8 @@ ui <- function(request) {
           nav_panel("Compare", tab_module_ui("bar", init_df, "bar", variable_choices, industry_tree)),
           nav_panel("Rankings", ranking_tab_ui("ranking", init_df, variable_choices)),
           nav_panel("Growth Accounting", growth_tab_ui("growth", init_df, industry_tree)),
-          nav_panel("Data", tab_module_ui("table", init_df, "table", variable_choices, industry_tree))
+          nav_panel("Data", tab_module_ui("table", init_df, "table", variable_choices, industry_tree)),
+          nav_panel("Definitions", definitions_tab_ui())
         )
       )
       nav_ul <- navset$find("ul.nav")$addClass("nav-justified")$selectedTags()
