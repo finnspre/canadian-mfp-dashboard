@@ -2424,7 +2424,7 @@ growth_tab_ui <- function(id, init_df, industry_tree) {
           ),
           tags$p(
             class = "text-muted small",
-            "Use this visualization to explore where labour productivity growth in Canada’s industries comes from. Each period shows 2 bars side by side: labour productivity growth on its own, then directly beside it the contribution of capital intensity (capital deepening), the contribution of labour composition, and multifactor productivity growth (the residual) stacked together -- so the second bar's height shows how those 3 factors add up to the first."
+            "Use this visualization to explore where labour productivity growth in Canada’s industries comes from."
           )
         ),
         download_menu_ui(ns)
@@ -3316,7 +3316,32 @@ ui <- function(request) {
       ".growth-legend { margin: 0.75rem 0; }
        .growth-legend-list { list-style: none; margin: 0.4rem 0; padding: 0; }
        .growth-legend-list li { display: flex; align-items: center; gap: 0.5rem; padding: 2px 0; font-size: 13px; }
-       .growth-legend-swatch { width: 0.7rem; height: 0.7rem; border-radius: 50%; flex-shrink: 0; }"
+       .growth-legend-swatch { width: 0.7rem; height: 0.7rem; border-radius: 50%; flex-shrink: 0; }
+       /* The 'Use this visualization...' blurb right under the legend list
+          -- its default browser/Bootstrap margins (p's own margin-top: 0,
+          margin-bottom: 1rem) left it sitting almost flush against the
+          legend above (just the list's own 0.4rem margin-bottom) while
+          opening up more room than wanted below, since that 1rem bottom
+          margin collapses with .growth-legend's own margin-bottom (0.75rem)
+          to whichever is bigger -- explicit margins here move the text down
+          a bit relative to the legend, and up relative to the Download
+          button below by not leaving a bigger collapsed margin than
+          .growth-legend's own for the sidebar's own item-to-item gap (see
+          the next rule) to add to. */
+       .growth-legend p { margin: 0.75rem 0 0; }
+       /* The sidebar's own flex `gap` between direct children (bslib's
+          sidebar-content, ~2.25rem) applies between .growth-legend and the
+          Download button below it regardless of either one's own margin --
+          confirmed via the live cascade (same mechanism as the Definitions
+          tab's card-body gap, see [[mfp-definitions-tab]] memory) that
+          margin tweaks alone can't close that gap below a fixed floor. A
+          small negative margin-top pulls the Download button up into that
+          gap instead, scoped via the adjacent-sibling combinator so this
+          only ever matches the Growth Accounting tab's own Download button
+          (the only .download-dropdown that directly follows a
+          .growth-legend), not the other 4 tabs' otherwise-identical
+          download_menu_ui() markup. */
+       .growth-legend + .download-dropdown { margin-top: -0.75rem; }"
     )),
     # The Definitions tab (see definitions_tab_ui()'s own comment on why
     # title+subtitle are wrapped in .definitions-header to begin with). h4's
