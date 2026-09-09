@@ -226,4 +226,159 @@
     var empty = document.getElementById("definitions-empty");
     if (empty) empty.hidden = anyVisible;
   });
+
+  // "Definition"/"More"/"Learn more" links (see goto_definition_link() in
+  // app.R, used from the Trends/Compare/Rankings/Data/Growth Accounting
+  // tabs) -- switches to the Definitions tab and, unless the link was
+  // rendered with highlight = FALSE (currently just the Trends tab's own
+  // "More" -- see variable_definition_ui()), scrolls to and highlights the
+  // matching .definitions-item too. Entirely client-side, no server
+  // round-trip: like the search box above, there's nothing here for Shiny
+  // to compute. One delegated listener rather than one bound per link --
+  // several of these render inside a renderUI() that re-renders on every
+  // Variable change (see e.g. ranking_tab_server()'s own
+  // output$definition_link), and delegation means never having to re-bind
+  // after any of those re-renders.
+  document.addEventListener("click", function (e) {
+    var link = e.target.closest(".goto-definition-link");
+    if (!link) return;
+    e.preventDefault();
+    if (link.getAttribute("data-highlight") === "false") {
+      // Plain navigation only -- literally the same action a reader
+      // clicking the "Definitions" pill directly would trigger (including
+      // clearing a leftover highlight, via the listener just below, since
+      // navigatingViaLink is never set true on this path), not
+      // goToDefinition()'s own switch-then-scroll-then-highlight sequence.
+      var defTab = findDefinitionsTab();
+      if (defTab) defTab.click();
+      return;
+    }
+    goToDefinition(link.getAttribute("data-term") || "");
+  });
+
+  // A highlight is only ever meant to appear as the direct result of
+  // clicking one of the "Definition"/"More"/"Learn more" links above --
+  // clicking the plain "Definitions" nav-pill itself, with nothing else
+  // clicked first, should always land on a clean, unhighlighted page. Without
+  // this, a highlight set by an earlier link click but never cleared by a
+  // scroll (see highlightDefinition()'s own comment) would otherwise still
+  // be sitting there the next time the reader comes back to this tab
+  // directly (confirmed empirically: click "More" on Trends, switch to
+  // another tab without scrolling, click the Definitions pill directly --
+  // the old highlight was still there). navigatingViaLink guards the one
+  // case this must NOT fire for: goToDefinition() below clicks this exact
+  // same nav-link itself to switch tabs, and that synchronous click would
+  // otherwise reach this same listener and immediately clear the very
+  // highlight goToDefinition() is about to set up.
+  document.addEventListener("click", function (e) {
+    if (navigatingViaLink) return;
+    var navLink = e.target.closest(".nav-link");
+    if (!navLink || navLink.textContent.trim() !== "Definitions") return;
+    if (clearActiveHighlight) { clearActiveHighlight(); clearActiveHighlight = null; }
+  });
+
+  // Clears whatever this function's own previous call is still waiting on
+  // (the "user scrolled" listener that would un-highlight a still-highlighted
+  // item) -- so clicking a 2nd "Definition"/"More …" link before the reader
+  // ever scrolls away from the 1st doesn't leave 2 entries highlighted at
+  // once, or leak the 1st listener once its own item is no longer the one
+  // that matters. Also read by the direct-nav-click listener just above.
+  var clearActiveHighlight = null;
+  var navigatingViaLink = false;
+
+  // Shared by both the plain-navigation branch above and goToDefinition()
+  // below, so there's exactly one place that knows how to find this pill.
+  function findDefinitionsTab() {
+    return Array.prototype.filter.call(
+      document.querySelectorAll(".nav-link"),
+      function (el) { return el.textContent.trim() === "Definitions"; }
+    )[0];
+  }
+
+  function goToDefinition(term) {
+    var defTab = findDefinitionsTab();
+    if (!defTab) return;
+
+    // Clears any search filter left over from an earlier visit to this tab
+    // (see the "definitions-search-input" listener above) -- otherwise a
+    // reader could land here to find the very entry they just asked for
+    // hidden by their own stale query.
+    var searchInput = document.getElementById("definitions-search-input");
+    if (searchInput && searchInput.value !== "") {
+      searchInput.value = "";
+      searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+
+    // shown.bs.tab only fires once the tab has actually finished switching
+    // -- scrollIntoView() on a still-hidden (display:none) pane's
+    // descendant is a no-op, same reasoning as the Growth Accounting
+    // nudge's own "wait for shown.bs.tab" comment above. .one(), not .on()
+    // -- this is a one-off per click, not a recurring behaviour to rebind
+    // on every future tab show the way the nudge's own listener is.
+    navigatingViaLink = true;
+    $(defTab).one("shown.bs.tab", function () {
+      highlightDefinition(term);
+      // Deferred, not synchronous -- confirmed via the live cascade that
+      // shown.bs.tab can fire *synchronously* within this very click
+      // dispatch (bslib's pills switch with no fade transition), meaning
+      // document's OTHER click listeners for this SAME event -- including
+      // the "clear a stale highlight on a direct Definitions click"
+      // listener above, registered later and so still due to run later in
+      // this same synchronous dispatch -- would otherwise see
+      // navigatingViaLink already back to false and immediately undo the
+      // highlight highlightDefinition() just set (reproduced empirically:
+      // the highlight class was added then removed again within ~2ms, no
+      // scroll event anywhere in between). Deferring the reset to a fresh
+      // task guarantees it can only ever apply to a later, genuinely
+      // separate click.
+      setTimeout(function () { navigatingViaLink = false; }, 0);
+    });
+    defTab.click();
+  }
+
+  function highlightDefinition(term) {
+    if (clearActiveHighlight) { clearActiveHighlight(); clearActiveHighlight = null; }
+
+    var needle = term.toLowerCase().replace(/"/g, "'");
+    var attempts = 0;
+    (function tryFind() {
+      attempts++;
+      var item = document.querySelector('.definitions-item[data-term="' + needle + '"]');
+      if (item) {
+        item.scrollIntoView({ behavior: "smooth", block: "center" });
+        item.classList.add("definitions-item-highlight");
+        // Arming the "user scrolled it away" listener is deliberately
+        // delayed rather than immediate -- scrollIntoView({behavior:
+        // "smooth"}) itself dispatches a stream of scroll events while it
+        // animates, confirmed empirically that binding the listener right
+        // away caught the *auto*-scroll's own tail end as if the reader had
+        // scrolled, clearing the highlight within the same moment it was
+        // added. A round number comfortably longer than any realistic
+        // smooth-scroll distance's own animation covers this without being
+        // so long it feels unresponsive to a genuine scroll right after.
+        var armTimer = setTimeout(function () {
+          var clear = function () {
+            item.classList.remove("definitions-item-highlight");
+            window.removeEventListener("scroll", clear, true);
+            if (clearActiveHighlight === clear) clearActiveHighlight = null;
+          };
+          // capture: true -- .definitions-tab-card's own overflow-y: auto
+          // scrolling (see its CSS) doesn't bubble a "scroll" event up to
+          // window the way a page-level scroll would, but a capture-phase
+          // listener on window still sees it on the way down to that
+          // element regardless, so one listener here covers both that
+          // inner scroll and any outer page scroll.
+          window.addEventListener("scroll", clear, true);
+          clearActiveHighlight = clear;
+        }, 900);
+        clearActiveHighlight = function () { clearTimeout(armTimer); item.classList.remove("definitions-item-highlight"); };
+        return;
+      }
+      // Bounded retry, same reasoning as the Growth Accounting nudge's own
+      // polling -- and the same quiet give-up for a term with no matching
+      // .definitions-item at all (e.g. a variable whose VARIABLE_DEFINITIONS
+      // entry is blanked to "", so it never rendered one to begin with).
+      if (attempts < 30) setTimeout(tryFind, 100);
+    })();
+  }
 })();

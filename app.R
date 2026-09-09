@@ -318,6 +318,41 @@ VARIABLE_DEFINITIONS <- c(
 # their own Variable pickers too, which was redundant once a reader could
 # always flip to Trends for it, so those 3 uiOutput()/renderUI() pairs were
 # removed and this definition now lives in exactly one place.
+# A small link that jumps to the Definitions tab -- the Trends tab's own
+# inline "More" (right after its definition), the Compare/Rankings/Data
+# tabs' "Definition" (right under their Variable picker), and the Growth
+# Accounting tab's "Learn more" (folded into its own explanatory blurb) all
+# share this one helper rather than 4 near-duplicate tags$a() calls drifting
+# apart over time.
+#
+# Purely client-side (see the "goto-definition-link" delegated click
+# listener in www/ui_helpers.js), not a Shiny actionLink()/observeEvent()
+# round-trip -- switching tabs (and scrolling, when highlight = TRUE) is
+# plain DOM/Bootstrap work with nothing for the server to compute, so it
+# stays entirely in JS, same reasoning as the Definitions tab's own search
+# box.
+#
+# highlight = FALSE (the Trends tab's own "More" -- see
+# variable_definition_ui()) renders a `data-highlight="false"` attribute
+# that tells the JS side to do nothing more than click the Definitions
+# nav-link itself -- the *exact* same action a reader clicking that pill
+# directly would trigger (no scroll, no highlight, no clearing whatever
+# search filter is currently active), per an explicit user request that
+# this one link read as pure navigation, not a jump to a specific entry.
+# The other 4 instances all keep the default TRUE: `term` there must
+# exactly match a VARIABLE_DEFINITIONS or GLOSSARY_EXTRA_TERMS key
+# (case-insensitively -- the JS side lowercases both sides to match
+# .definitions-item's own data-term) for the highlight to find anything; a
+# term with no matching entry still switches tabs, just with nothing to
+# highlight (see the JS's own bounded-retry comment).
+goto_definition_link <- function(term, text, highlight = TRUE) {
+  tags$a(
+    href = "#", class = "goto-definition-link", `data-term` = term,
+    `data-highlight` = if (!highlight) "false",
+    text
+  )
+}
+
 variable_definition_ui <- function(variable) {
   def <- VARIABLE_DEFINITIONS[[variable]]
   if (is.null(def) || !nzchar(def)) return(NULL)
@@ -329,7 +364,14 @@ variable_definition_ui <- function(variable) {
   # what the picker above and the Definitions tab both show), so this
   # doesn't touch VARIABLE_DEFINITIONS' lookup key.
   label <- if (variable == "Multifactor productivity") "Multifactor productivity (MFP)" else variable
-  p(class = "text-muted small", strong(paste0(label, ": ")), def)
+  # " " (a plain space) before it, not a separate element/margin, is what
+  # makes "More" read as the definition's own next sentence rather than a
+  # visually separate line, per how this was asked for. highlight = FALSE --
+  # see goto_definition_link()'s own comment: this one link is plain
+  # navigation to the Definitions tab, not a jump to `variable`'s own entry
+  # there, so `variable` here only ever matters for VARIABLE_DEFINITIONS'
+  # own lookup above, never reaching the JS side at all.
+  p(class = "text-muted small", strong(paste0(label, ": ")), def, " ", goto_definition_link(variable, "More", highlight = FALSE))
 }
 
 # Dashboard concepts shown at the end of the Definitions tab's glossary,
@@ -1338,6 +1380,10 @@ ranking_tab_ui <- function(id, init_df, variable_choices) {
           tree_data = flat_tree_nodes(variable_choices), selected = DEFAULT_VARIABLE,
           placeholder = "Search variables..."
         ),
+        # renderUI (not a static goto_definition_link() call) since the
+        # term it should jump to tracks whichever Variable is currently
+        # selected -- see ranking_tab_server()'s own output$definition_link.
+        uiOutput(ns("definition_link")),
         sliderInput(
           ns("year_range"), "Date range",
           min = min(init_df$Year), max = max(init_df$Year),
@@ -1413,6 +1459,15 @@ ranking_tab_server <- function(id, raw_data, variable_uom_lookup) {
       }
       updateSliderInput(session, "year_range", min = year_min, max = year_max, value = range_value)
     }) |> bindEvent(raw_data(), once = FALSE, ignoreInit = TRUE)
+
+    # See goto_definition_link()'s own comment -- req() rather than a
+    # DEFAULT_VARIABLE fallback since a NULL input$variable here is only
+    # ever a brief moment before the session's first render finishes, not a
+    # state this link needs to paper over.
+    output$definition_link <- renderUI({
+      req(input$variable)
+      goto_definition_link(input$variable, "Definition")
+    })
 
     scoped_raw <- reactive({
       # See the matching comment on the Trends tab's own scoped_raw().
@@ -1703,6 +1758,9 @@ tab_module_ui <- function(id, init_df, kind, variable_choices, industry_tree) {
           tree_data = flat_tree_nodes(variable_choices), selected = DEFAULT_VARIABLE,
           placeholder = "Search variables..."
         ),
+        # renderUI -- see the matching comment on the Rankings tab's own
+        # output$definition_link (tab_module_server() below).
+        uiOutput(ns("definition_link")),
         tags$strong("Compare"),
         # Collapsible tree dropdown -- closed to just the root aggregate by
         # default, arrow to expand a branch, click a label to pick it.
@@ -1891,6 +1949,17 @@ tab_module_server <- function(id, raw_data, kind, variable_uom_lookup) {
       }
       updateSelectInput(session, "base_year", choices = year_choices, selected = new_base)
     }) |> bindEvent(raw_data(), once = FALSE, ignoreInit = TRUE)
+
+    # See goto_definition_link()'s own comment -- req() rather than a
+    # DEFAULT_VARIABLE fallback since a NULL input$variable here is only
+    # ever a brief moment before the session's first render finishes, not a
+    # state this link needs to paper over. One output$definition_link
+    # definition covers both kinds sharing this module (Compare and Data),
+    # same as everything else in tab_module_server().
+    output$definition_link <- renderUI({
+      req(input$variable)
+      goto_definition_link(input$variable, "Definition")
+    })
 
     # The set of Industries currently being compared -- replaces the old
     # compare_mode-driven industries_multi/geos_multi/geo_single/
@@ -2424,7 +2493,8 @@ growth_tab_ui <- function(id, init_df, industry_tree) {
           ),
           tags$p(
             class = "text-muted small",
-            "Use this visualization to explore where labour productivity growth in Canada’s industries comes from."
+            "Use this visualization to explore where labour productivity growth in Canada’s industries comes from.",
+            " ", goto_definition_link("Growth accounting", "Learn more")
           )
         ),
         download_menu_ui(ns)
@@ -3378,11 +3448,67 @@ ui <- function(request) {
     # to override that UA-level default regardless of specificity.
     tags$style(HTML(
       ".definitions-list { margin: 0; }
-       .definitions-item { margin-top: 1rem; }
+       .definitions-item { margin-top: 1rem; border-radius: 6px; transition: background-color 400ms ease, box-shadow 400ms ease; }
        .definitions-item:first-child { margin-top: 0; }
        .definitions-item[hidden] { display: none; }
        .definitions-item dt { font-weight: 600; margin: 0; }
-       .definitions-item dd { margin: 0.25rem 0 0 0; }"
+       .definitions-item dd { margin: 0.25rem 0 0 0; }
+       /* The brief highlight a goto_definition_link() jump lands on (see
+          the 'goto-definition-link' click handler in www/ui_helpers.js) --
+          background-color + box-shadow only, deliberately no padding/margin
+          change, so adding or removing this class never shifts this item's
+          own box size or nudges its neighbours -- just a soft colour wash
+          that fades in on arrival and back out once the reader scrolls. The
+          box-shadow's spread is what gives the highlight some breathing
+          room around the text without that padding change. */
+       .definitions-item-highlight { background-color: rgba(5,152,216,.1); box-shadow: 0 0 0 10px rgba(5,152,216,.1); }"
+    )),
+    # goto_definition_link()'s 5 instances (Trends' "More", Compare/
+    # Rankings/Data's "Definition", Growth Accounting's "Learn more") --
+    # deliberately the plain browser-default hyperlink look (blue,
+    # underlined) instead of this app's own house link style (maple blue,
+    # no underline -- see the plain `a` rule in csls-shiny-theme.css) at the
+    # user's explicit request, so these read unmistakably as links planted
+    # inside otherwise-plain muted text, rather than blending into it the
+    # way the site's understated house style would. #0000EE is the actual
+    # browser-default `:link` blue, not a colour picked by eye. `:visited`
+    # is pinned to the same blue rather than left to the browser's own
+    # default purple -- every instance shares the literal href="#" (see
+    # goto_definition_link()), and :visited matches by URL, not by DOM node,
+    # so without this, clicking any *one* of these 5 links would turn every
+    # other one purple too, mislabelling links the reader never actually
+    # clicked as "already visited". Specificity-wise this needs no
+    # special-casing to win over csls-shiny-theme.css's own plain `a`/
+    # `a:hover` rules -- 1 class alone already out-specifies a bare type
+    # selector or type+pseudo-class pair, regardless of source order.
+    tags$style(HTML(
+      ".goto-definition-link, .goto-definition-link:visited { color: #0000EE; text-decoration: underline; }
+       .goto-definition-link:hover, .goto-definition-link:focus-visible { color: #0000EE; text-decoration: underline; }"
+    )),
+    # The Compare/Rankings/Data tabs' own "Definition" link specifically
+    # (scoped to its 3 renderUI() output ids -- see ranking_tab_server()'s
+    # and tab_module_server()'s output$definition_link -- so this doesn't
+    # touch the Trends/Growth Accounting tabs' own goto-definition-link
+    # instances, which stay inline text with no positioning of their own).
+    # Both output divs render with `display: contents` (bslib's own default
+    # for a shiny-html-output inside a fillable sidebar -- confirmed via the
+    # live cascade that the wrapper div itself generates no box at all, so
+    # this rule targets the <a> directly rather than the wrapper), which is
+    # also why margin here works exactly like it did for the Growth
+    # Accounting tab's Download button (see that CSS's own comment): the
+    # <a> becomes a direct flex item of the sidebar's own column layout,
+    # picking up that same fixed item-to-item gap no ordinary margin alone
+    # can close, hence the negative margin-top rather than a positive one.
+    # A small positive margin-left is the "slightly more inward" nudge off
+    # the Variable picker's own left edge (which this <a> otherwise sits
+    # perfectly flush against, being a sibling flex item at the same
+    # indent) -- purely a placement preference, not fixing a misalignment.
+    tags$style(HTML(
+      "#bar-definition_link .goto-definition-link,
+       #ranking-definition_link .goto-definition-link,
+       #table-definition_link .goto-definition-link {
+         margin: -1rem 0 0 0.25rem;
+       }"
     )),
     tags$script(src = versioned_asset("tree_select.js")),
     tags$script(src = versioned_asset("ui_helpers.js")),
