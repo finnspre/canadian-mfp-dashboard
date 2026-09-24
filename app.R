@@ -177,28 +177,30 @@ GROWTH_ACCOUNTING_COLORS <- c(
 )
 
 # The Growth Accounting tab's Interval picker -- how many years each bar on
-# the x-axis covers, from blank (the default -- one bar spanning the whole
-# selected date range) through 1 year ("annual") up to however many years
-# the *currently selected date range* itself spans. No fixed ceiling (the
-# old flat "10 years" cap): table 36-10-0208-01 spans up to 62 years per
-# industry (see GROWTH_ACCOUNTING_VARS), and there's no reason to stop a
-# reader from asking for e.g. 20-year periods over a range that long, so the
-# choices this returns -- and the clamp growth_tab_server()'s own
+# the x-axis covers, from "Full date range" (the default -- one bar
+# spanning the whole selected date range, and *always* the first option in
+# the list, not just its initial value) through 1 year up to however many
+# years the *currently selected date range* itself spans. No fixed ceiling
+# (the old flat "10 years" cap): table 36-10-0208-01 spans up to 62 years
+# per industry (see GROWTH_ACCOUNTING_VARS), and there's no reason to stop
+# a reader from asking for e.g. 20-year periods over a range that long, so
+# the choices this returns -- and the clamp growth_tab_server()'s own
 # growth_interval() applies -- are always relative to the live date range,
 # not a constant. Built fresh per date range (not a fixed constant) since
-# that ceiling moves with input$year_range -- see growth_tab_server()'s sync
-# observers for where this gets called with the *current* range's span.
+# that ceiling moves with input$year_range -- see growth_tab_server()'s own
+# sync observer for where this gets called with the *current* range's span.
 # Values are plain integers-as-strings (not e.g. "5y") since
 # growth_tab_server() does arithmetic directly on the selected interval
-# (period width, step size); selectizeInput() still reports it back as a
+# (period width, step size); selectInput() still reports it back as a
 # string like every HTML <select> (see growth_interval()'s own as.integer()
 # round-trip), same convention the Trends/Compare tabs' own numeric Base
 # year <select> already relies on. "" is the one non-numeric choice,
-# standing for "blank" -- see growth_interval() for what that resolves to.
+# standing for "Full date range" -- see growth_interval() for what that
+# resolves to.
 growth_interval_choices <- function(max_years) {
   max_years <- max(as.integer(max_years), 1L)
-  labels <- if (max_years == 1L) "1 year (annual)" else c("1 year (annual)", paste0(2:max_years, " years"))
-  c("Full date range (default)" = "", setNames(as.character(seq_len(max_years)), labels))
+  labels <- if (max_years == 1L) "1 year" else c("1 year", paste0(2:max_years, " years"))
+  c("Full date range" = "", setNames(as.character(seq_len(max_years)), labels))
 }
 
 # "Slightly more greyscale" treatment for the one truncated period a
@@ -2453,37 +2455,29 @@ growth_tab_ui <- function(id, init_df, industry_tree) {
           value = c(min(init_df$Year), max(init_df$Year)),
           step = 1, sep = ""
         ),
-        # How many years each bar covers -- blank (the default) means one
-        # bar spanning the whole selected date range; typing or picking a
+        # How many years each bar covers -- "Full date range" (the default,
+        # and always the first item in the list, not just an initial value)
+        # means one bar spanning the whole selected date range; picking a
         # number breaks that into that many years per bar instead, up to
         # however many years the date range itself spans (no fixed ceiling
-        # -- see growth_interval_choices()). A typable list (create = TRUE),
-        # not a plain dropdown like every other single-value <select> in
-        # this app (e.g. the Trends tab's Base year) -- the ceiling here
-        # moves with the date range and can run past what's comfortable to
-        # scroll through as a list, so typing a number directly is the
-        # primary way this is meant to be used; growth_tab_server()'s own
-        # sync observers clamp anything typed past the current date range's
-        # span back down to it. createFilter restricts typed entries to
-        # digits only -- growth_interval() downstream coerces via
-        # as.integer() regardless, but this keeps the dropdown itself from
-        # ever showing a nonsense created option. Periods are counted
-        # backward from the date range's own *end* year (see
-        # filtered_data()), not forward from its start, so choosing e.g. "5
-        # years" over 2008-2020 gives 2015-2020/2010-2015/2008-2010, the
-        # last (oldest) one shorter than the rest rather than the most
-        # recent one -- a reader picking a date range is far more likely to
-        # care about a full, untruncated *recent* period than a full oldest
-        # one.
-        selectizeInput(
+        # -- see growth_interval_choices()). selectize = FALSE, matching
+        # every other plain single-value dropdown in this app (e.g. the
+        # Trends tab's Base year) -- a plain pick-from-list <select>, not a
+        # searchable/typable one, even though the list itself can run
+        # longer than the old flat 10-choice cap; growth_tab_server()'s own
+        # sync observer keeps the choices offered (and the current
+        # selection, if the date range just shrank under it) in step with
+        # the live date range. Periods are counted backward from the date
+        # range's own *end* year (see filtered_data()), not forward from
+        # its start, so choosing e.g. "5 years" over 2008-2020 gives
+        # 2015-2020/2010-2015/2008-2010, the last (oldest) one shorter than
+        # the rest rather than the most recent one -- a reader picking a
+        # date range is far more likely to care about a full, untruncated
+        # *recent* period than a full oldest one.
+        selectInput(
           ns("interval"), "Interval",
           choices = growth_interval_choices(diff(range(init_df$Year))),
-          selected = "",
-          options = list(
-            create = TRUE,
-            createFilter = "^[0-9]+$",
-            placeholder = "Full date range"
-          )
+          selected = "", selectize = FALSE
         ),
         # Each bar is identified purely by colour (no per-bar source
         # labelling on the chart itself, per how this tab is meant to read)
@@ -2621,53 +2615,42 @@ growth_tab_server <- function(id, raw_data) {
       max(input$year_range[2] - input$year_range[1], 1L)
     })
 
-    # Keeps the typable Interval list's own choices in sync with the
-    # *current* date range -- always 1..growth_interval_max(), no fixed
-    # ceiling -- and clamps the selected value down to that new max when the
-    # range just shrank out from under it. Blank ("") is left untouched --
-    # it's never out of range, whatever the date range's own span is (see
-    # growth_interval() below for what it resolves to). Explicitly
-    # recomputes `selected` every time (rather than passing NULL, "leave it
-    # as-is") since selectize doesn't reliably keep a now-absent numeric
-    # value selected once its own choices list is swapped out from under it.
+    # Keeps the Interval list's own choices in sync with the *current* date
+    # range -- always "Full date range" plus 1..growth_interval_max(), no
+    # fixed ceiling -- and clamps the selected value down to that new max
+    # when the range just shrank out from under it (e.g. was "10 years",
+    # date range narrows to a 5-year span). "Full date range" ("") is left
+    # untouched -- it's never out of range, whatever the date range's own
+    # span is (see growth_interval() below for what it resolves to).
+    # Explicitly recomputes `selected` every time (rather than passing
+    # NULL, "leave it as-is") since a plain <select>'s value can otherwise
+    # be left pointing at an option updateSelectInput() just removed from
+    # the list. No equivalent "clamp what was just typed" observer is
+    # needed any more -- selectize = FALSE in growth_tab_ui() means this is
+    # a plain pick-from-list dropdown, not a typable one, so input$interval
+    # can only ever be a value that was actually offered in the list to
+    # begin with.
     observe({
       req(input$year_range)
       max_years <- growth_interval_max()
       iv <- suppressWarnings(as.integer(input$interval))
       selected <- if (is.na(iv) || iv < 1) "" else as.character(min(iv, max_years))
-      updateSelectizeInput(session, "interval", choices = growth_interval_choices(max_years), selected = selected)
+      updateSelectInput(session, "interval", choices = growth_interval_choices(max_years), selected = selected)
     }) |> bindEvent(input$year_range, ignoreInit = TRUE)
 
-    # Redirects a typed/created value (see the selectizeInput's own
-    # create = TRUE in growth_tab_ui()) larger than the date range can
-    # support down to the largest interval it actually allows, live as the
-    # reader types it -- separate from the observer above since that one
-    # only fires on a *date range* change, not an Interval edit. No-ops
-    # (and doesn't re-fire) once the value it just set is itself <=
-    # max_years, so this settles in one extra pass rather than looping.
-    observe({
-      req(input$year_range)
-      max_years <- growth_interval_max()
-      iv <- suppressWarnings(as.integer(input$interval))
-      if (!is.na(iv) && iv > max_years) {
-        updateSelectizeInput(session, "interval", selected = as.character(max_years))
-      }
-    }) |> bindEvent(input$interval, ignoreInit = TRUE)
-
-    # input$interval as a clean, defensive integer -- selectizeInput()
-    # always reports its value back as a string (see
-    # growth_interval_choices()'s own comment), and this is read from 3
-    # different places below (the period math itself, the chart's
-    # title/axis, and the CSV filename), so it's coerced once here rather
-    # than 3 times over. Blank (the default), NULL (before the input first
-    # exists), or any other unexpected/invalid value all fall back to the
-    # full width of the current date range -- i.e. one bar covering the
-    # whole thing -- matching what the blank default is meant to show; a
-    # value inside range passes through as-is, and anything typed past the
-    # date range's own span clamps down to it (belt-and-suspenders --
-    # growth_tab_server()'s own sync observer above already keeps the UI
-    # itself from showing an out-of-range value, but this reactive is what
-    # every consumer downstream actually relies on).
+    # input$interval as a clean, defensive integer -- selectInput() always
+    # reports its value back as a string (see growth_interval_choices()'s
+    # own comment), and this is read from 3 different places below (the
+    # period math itself, the chart's title/axis, and the CSV filename), so
+    # it's coerced once here rather than 3 times over. Blank/"Full date
+    # range" (the default), NULL (before the input first exists), or any
+    # other unexpected/invalid value all fall back to the full width of the
+    # current date range -- i.e. one bar covering the whole thing --
+    # matching what "Full date range" is meant to show; a value inside
+    # range passes through as-is. min(iv, max_years) is belt-and-suspenders
+    # -- growth_tab_server()'s own sync observer above already keeps the UI
+    # itself from ever offering an out-of-range choice -- but this reactive
+    # is what every consumer downstream actually relies on.
     growth_interval <- reactive({
       max_years <- growth_interval_max()
       iv <- suppressWarnings(as.integer(input$interval))
@@ -3459,6 +3442,44 @@ ui <- function(request) {
       BRAND_MAPLE_BLUE,
       INK_MUTED,
       BRAND_JETS_BLUE
+    ))),
+    # Interval (see growth_tab_ui()) is a plain selectize = FALSE <select>,
+    # same widget family as the Trends tab's Base year picker -- it already
+    # gets the site's 42px/8px-radius/hairline-border form-control
+    # treatment (csls-shiny-theme.css section 4) the same as every other
+    # picker in this app. But a bare <select>'s own native dropdown arrow
+    # (drawn by the browser/OS, not this stylesheet) doesn't match the
+    # solid down-pointing triangle every *other* picker here actually shows
+    # -- treeSelectInput's own .tree-select-chevron, or selectize's own
+    # :after caret (csls-shiny-theme.css's ".selectize-control.single
+    # .selectize-input:after") -- so Interval visibly reads as a different
+    # control family even though its box already matches. appearance: none
+    # hides that native glyph; the replacement is a ::after pseudo-element
+    # on Shiny's own auto-generated wrapper div (the plain, class-less
+    # <div> selectInput() always renders directly around the <select>,
+    # targeted here via the label's id + adjacent-sibling combinator, since
+    # Shiny gives that div no class or id of its own to hook) -- a <div> is
+    # not a replaced element the way <select>/<input> are, so unlike
+    # .tree-select-chevron's own span (see its own comment on why *that*
+    # one can't just be a pseudo-element on the <input> it decorates) this
+    # needs no extra markup in growth_tab_ui() at all. Same glyph
+    # (U+25B8, rotated) and same right/color/size as .tree-select-chevron,
+    # so it's one visual recipe for "a picker's own dropdown arrow" in this
+    # app, not two. pointer-events: none lets a click anywhere in the box,
+    # including right over the glyph, still open the native <select>
+    # underneath it.
+    tags$style(HTML(sprintf(
+      "#growth-interval-label + div { position: relative; }
+       #growth-interval-label + div::after {
+         content: \"\\25B8\"; position: absolute; right: 16px; top: 50%%;
+         transform: translateY(-50%%) rotate(90deg);
+         color: %s; font-size: 14px; line-height: 1; pointer-events: none;
+       }
+       #growth-interval {
+         appearance: none; -webkit-appearance: none; -moz-appearance: none;
+         padding-right: 36px;
+       }",
+      INK_PRIMARY
     ))),
     # The Growth Accounting tab's sidebar legend -- swatches styled like the
     # Compare/Data tabs' pair-chip-swatch (a small solid circle) rather than
